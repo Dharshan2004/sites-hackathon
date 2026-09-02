@@ -13,6 +13,7 @@ export function BlueprintWorkshop({ architecture, progress, phase, startedAt }: 
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const timer = window.setInterval(() => setFactIndex((current) => (current + 1) % world.facts.length), 5600);
     return () => window.clearInterval(timer);
   }, [world.facts.length]);
@@ -28,7 +29,7 @@ export function BlueprintWorkshop({ architecture, progress, phase, startedAt }: 
     <section className="blueprint-workshop" data-architecture={world.id} aria-label="Museum construction progress">
       <div className="blueprint-heading">
         <span><DraftingCompass size={15} /> Live architectural study</span>
-        <span className="blueprint-pulse">{formatElapsed(elapsed)}</span>
+        <span className="blueprint-pulse" aria-hidden="true">{formatElapsed(elapsed)}</span>
       </div>
 
       <div className="blueprint-sheet" aria-hidden="true">
@@ -54,13 +55,13 @@ export function BlueprintWorkshop({ architecture, progress, phase, startedAt }: 
           <span><i />Light <b>{world.blueprint.light}</b></span>
         </div>
         <div className="workshop-status">
-          <div className="workshop-phases" aria-label="Construction stages">
-            <span className={phase === 'preparing' ? 'active' : 'complete'}>Prepare photo</span>
-            <span className={phase === 'rendering' ? 'active' : phase === 'mapping' ? 'complete' : ''}>Render room</span>
-            <span className={phase === 'mapping' ? 'active' : ''}>Map exhibits</span>
-          </div>
-          <p className="workshop-progress" aria-live="polite">{progress}</p>
-          <div className="workshop-reassurance"><span>Detailed rooms usually take 1-3 minutes.</span><Link href="/museum/example-art-deco-bicycle" target="_blank">Tour the example while this builds</Link></div>
+          <ol className="workshop-phases" aria-label="Construction stages">
+            <li className={phase === 'preparing' ? 'active' : 'complete'} aria-current={phase === 'preparing' ? 'step' : undefined}>Optimize photo</li>
+            <li className={phase === 'rendering' ? 'active' : phase === 'mapping' ? 'complete' : ''} aria-current={phase === 'rendering' ? 'step' : undefined}>Generate room</li>
+            <li className={phase === 'mapping' ? 'active' : ''} aria-current={phase === 'mapping' ? 'step' : undefined}>Map 3 exhibits</li>
+          </ol>
+          <output className="workshop-progress" aria-live="polite">{progress}</output>
+          <div className="workshop-reassurance"><span>Your job is saved on this device while it builds.</span><Link href="/museum/example-art-deco-bicycle" target="_blank" rel="noopener" aria-label="Tour the example while this builds (opens in a new tab)">Tour the example while this builds</Link></div>
         </div>
         <div className="architecture-fact">
           <Lightbulb size={15} />

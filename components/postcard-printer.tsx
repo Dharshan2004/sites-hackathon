@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 export function PostcardPrinter({ file, previewUrl, exhibitTitle, onClose }: { file: File; previewUrl: string; exhibitTitle: string; onClose: () => void }) {
   const [printed, setPrinted] = useState(false);
   const [shared, setShared] = useState(false);
+  const [shareError, setShareError] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
   const canShareFile = typeof navigator !== 'undefined'
     && typeof navigator.canShare === 'function'
@@ -30,7 +31,7 @@ export function PostcardPrinter({ file, previewUrl, exhibitTitle, onClose }: { f
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const timer = window.setTimeout(() => {
       setPrinted(true);
-    }, reducedMotion ? 80 : 2050);
+    }, reducedMotion ? 80 : 1150);
     return () => {
       window.clearTimeout(timer);
       document.body.style.overflow = previousOverflow;
@@ -41,11 +42,14 @@ export function PostcardPrinter({ file, previewUrl, exhibitTitle, onClose }: { f
 
   async function shareImage() {
     if (!canShareFile) { download(); return; }
+    setShareError('');
     try {
       await navigator.share({ files: [file], title: 'My One Minute Museum', text: 'A moment, now on exhibition.' });
       setShared(true);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
+      download();
+      setShareError('Sharing was unavailable, so the card was saved instead.');
     }
   }
 
@@ -56,8 +60,10 @@ export function PostcardPrinter({ file, previewUrl, exhibitTitle, onClose }: { f
         <button type="button" className="printer-close" onClick={onClose} aria-label="Close" autoFocus><X size={18} /></button>
         <div className="printer-copy">
           <span>Exhibition press</span>
-          <h2 id="printer-title">{printed ? 'Your card is ready.' : 'Printing your museum card.'}</h2>
-          <p>{printed ? `Your 1080 × 1920 card features “${exhibitTitle}” and includes a QR code back to the interactive room.` : 'Ink, paper and one tiny opening-night souvenir.'}</p>
+          <h2 id="printer-title">{printed ? 'Your Story card is ready.' : 'Printing your museum card.'}</h2>
+          <p>{printed ? `Your 1080 × 1920 card features “${exhibitTitle}” and includes a QR doorway back to the interactive museum.` : 'Ink, paper and one tiny opening-night souvenir.'}</p>
+          <output className="sr-only" aria-live="polite">{printed ? 'Your Story card is ready to download or share.' : 'Your Story card is printing.'}</output>
+          {shareError && <p className="printer-error" role="alert">{shareError}</p>}
         </div>
         <div className="printer-machine" aria-hidden="true">
           <div className="printer-light" />

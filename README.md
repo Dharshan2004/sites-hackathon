@@ -1,6 +1,6 @@
 # One Minute Museum
 
-Turn any photograph into a miniature museum you can visit, hear, and share.
+Turn any photograph into a miniature, interactive museum you can visit, hear, and share.
 
 **Live exhibition:** [minutes-museum.dharshanlab.chatgpt.site](https://minutes-museum.dharshanlab.chatgpt.site)
 
@@ -44,10 +44,11 @@ Gothic, Art Deco, Art Nouveau, Brutalism, Bauhaus, Moorish, Ancient Egyptian, an
 
 1. Use Node.js 22.13 or newer.
 2. Run `npm install`.
-3. Copy `.env.example` to `.env.local` and add `OPENAI_API_KEY`.
+3. Create `.env.local` and add `OPENAI_API_KEY`.
 4. Run `npm run dev`.
 
 The deployed Site provides D1 as `DB`, R2 as `FILES`, and the OpenAI key as a server-only secret. Never expose the key to client code.
+The app uses ChatGPT Sites D1 (`DB`) for resumable museum metadata and R2 (`FILES`) for generated rooms. A second multimodal pass reads the finished render, writes grounded labels, and returns validated hotspot coordinates. Three.js adds a subtle 2.5D parallax presentation on capable desktop devices; touch, low-power, and reduced-motion visitors receive the static render.
 
 ## Working with a partner
 

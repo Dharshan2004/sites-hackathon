@@ -17,8 +17,9 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
     onModeChange?.('still');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const compact = window.matchMedia('(max-width: 719px)').matches;
+    const precisePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     const lowPower = navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 4;
-    if (!host || reducedMotion || compact || lowPower || !document.createElement('canvas').getContext('webgl2')) return;
+    if (!host || reducedMotion || compact || !precisePointer || lowPower || !document.createElement('canvas').getContext('webgl2')) return;
 
     let disposed = false;
     let frame = 0;
@@ -151,7 +152,7 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
         host.removeEventListener('pointermove', onPointer); host.removeEventListener('pointerleave', onLeave); window.removeEventListener('resize', onResize);
         texture.dispose(); artwork.geometry.dispose(); artwork.material.dispose(); dustGeometry.dispose(); (particles.material as InstanceType<typeof THREE.PointsMaterial>).dispose(); renderer.dispose(); renderer.domElement.remove();
       };
-    });
+    }).catch(() => onModeChange?.('still'));
 
     return () => { disposed = true; cleanup(); };
   }, [onModeChange, src]);

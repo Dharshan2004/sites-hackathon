@@ -21,6 +21,23 @@ function json(request: Request, data: unknown, init?: ResponseInit) {
   return Response.json(data, { ...init, headers });
 }
 
+function isAllowedCreateRequest(request: Request) {
+  const requestOrigin = new URL(request.url).origin;
+  const fetchSite = request.headers.get('Sec-Fetch-Site');
+  if (fetchSite === 'cross-site') return false;
+  const origin = request.headers.get('Origin');
+  if (origin) return origin === requestOrigin;
+  const referer = request.headers.get('Referer');
+  if (referer) {
+    try {
+      return new URL(referer).origin === requestOrigin;
+    } catch {
+      return false;
+    }
+  }
+  return fetchSite === 'same-origin' || fetchSite === 'same-site';
+}
+
 const createTableSql = `CREATE TABLE IF NOT EXISTS museums (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -101,13 +118,19 @@ async function cleanAbandonedSources(bindings: Bindings, now: number) {
 
 export async function POST(request: Request) {
   const bindings = env as unknown as Bindings;
+  if (!isAllowedCreateRequest(request)) {
+    return json(request, { error: 'Museum creation is only available from the exhibition studio.' }, { status: 403 });
+  }
+  const contentLength = Number(request.headers.get('Content-Length') ?? '0');
+  if (Number.isFinite(contentLength) && contentLength > 1_500_000) {
+    return json(request, { error: 'That upload is too large. Choose a smaller photograph.' }, { status: 413 });
+  }
   let form: FormData;
   try {
     form = await request.formData();
   } catch {
     return json(request, { error: 'The upload could not be read. Choose the photograph again.' }, { status: 400 });
   }
-
   const photo = form.get('photo');
   const rawTitle = form.get('title');
   const rawLens = form.get('lens');

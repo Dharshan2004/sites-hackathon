@@ -14,7 +14,7 @@ import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 type Postcard = { file: File; previewUrl: string; exhibitTitle: string };
 type ViewMode = 'museum' | 'source';
 
-export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; onReset?: () => void }) {
+export function MuseumExhibition({ result, onReset, focusOnMount = false }: { result: MuseumRecord; onReset?: () => void; focusOnMount?: boolean }) {
   const [activeExhibit, setActiveExhibit] = useState(0);
   const [visited, setVisited] = useState<number[]>([0]);
   const [viewMode, setViewMode] = useState<ViewMode>('museum');
@@ -24,8 +24,10 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
   const [postcard, setPostcard] = useState<Postcard | null>(null);
   const [cardError, setCardError] = useState('');
   const [shareError, setShareError] = useState('');
+  const [shareFallbackUrl, setShareFallbackUrl] = useState('');
   const [dioramaMode, setDioramaMode] = useState<'living' | 'still'>('still');
   const labelRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const tourRun = useRef(0);
   const exhibit = result.exhibits[activeExhibit] ?? result.exhibits[0];
   const architecture = getArchitecture(result.lens);
@@ -33,7 +35,8 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'auto' });
-  }, []);
+    if (focusOnMount) window.requestAnimationFrame(() => titleRef.current?.focus({ preventScroll: true }));
+  }, [focusOnMount]);
 
   useEffect(() => () => {
     tourRun.current += 1;
@@ -51,10 +54,14 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
 
   async function shareMuseum() {
     setShareError('');
+    setShareFallbackUrl('');
     const url = museumUrl(result.id);
+    const text = `I turned “${result.title}” into a tiny ${architecture.label} museum. Come inside.`;
     if (navigator.share) {
       try {
-        await navigator.share({ title: result.title, text: 'Visit my One Minute Museum', url });
+        await navigator.share({ title: `${result.title} | One Minute Museum`, text, url });
+        setShared(true);
+        window.setTimeout(() => setShared(false), 1800);
         return;
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -65,7 +72,8 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
       setShared(true);
       window.setTimeout(() => setShared(false), 1800);
     } catch {
-      setShareError('The link could not be copied. Use your browser address bar to copy this museum.');
+      setShareError('Automatic copy was unavailable. Select the exact museum link below.');
+      setShareFallbackUrl(url);
     }
   }
 
@@ -130,12 +138,16 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
           : <Link className="new-museum-link" href="/"><ArrowLeft size={16} /> Make yours</Link>}
         <div className="exhibition-brand"><Aperture size={17} /> One Minute Museum</div>
         <div className="exhibition-actions">
-          <Button variant="ghost" onClick={printCard} disabled={isPrinting}>{isPrinting ? <LoaderCircle className="button-spinner" /> : <Printer />} {isPrinting ? 'Composing' : 'Print card'}</Button>
-          <Button onClick={shareMuseum}>{shared ? <Check /> : <Share2 />}{shared ? 'Copied' : 'Share'}</Button>
+          <Button variant="ghost" onClick={printCard} disabled={isPrinting}>{isPrinting ? <LoaderCircle className="button-spinner" /> : <Printer />} {isPrinting ? 'Composing' : 'Story card'}</Button>
+          <Button onClick={shareMuseum}>{shared ? <Check /> : <Share2 />}{shared ? 'Ready' : 'Invite visitors'}</Button>
         </div>
       </nav>
       <section className="museum-room">
-        <div className="room-header"><span>Unlisted collection</span><span>{architecture.label} / {architecture.world}</span></div>
+        <div className="room-header">
+          <span>AI-curated · {hasMappedExhibits ? '3 vision-mapped exhibits' : 'safe label fallback'}</span>
+          <span>{architecture.label} / {architecture.world}</span>
+          <span>{result.sourceUrl ? 'Original stays on this device' : 'Unlisted collection'}</span>
+        </div>
         <div className="diorama-stage">
           <div className="artwork-field">
             {viewMode === 'museum'
@@ -165,6 +177,7 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
                     <label
                       className={activeExhibit === index ? 'hotspot active' : 'hotspot'}
                       style={{ left: `${item.x}%`, top: `${item.y}%` }}
+                      data-title={item.title}
                       htmlFor={`exhibit-${result.id}-${index}`}
                     ><span>{item.number}</span><span className="sr-only">{item.title}</span></label>
                   </span>
@@ -175,7 +188,7 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
           </div>
           {viewMode === 'museum' && (
             <button type="button" className="mobile-exhibit-caption" onClick={showFullLabel} aria-label={`Read the full label for ${exhibit.title}`}>
-              <span>Exhibit {exhibit.number}</span>
+              <span>Exhibit {exhibit.number}<em>Read full label <ArrowRight size={12} /></em></span>
               <strong>{exhibit.title}</strong>
               <small>{exhibit.label}</small>
             </button>
@@ -191,7 +204,7 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
             <div><small>Visitor catalogue</small><strong>{progressLabel}</strong></div>
             <button type="button" onClick={startTour}>{isTouring ? <Square size={12} fill="currentColor" /> : <Volume2 size={14} />}{isTouring ? 'Stop tour' : 'Guided tour'}</button>
           </div>
-          <h1>{result.title}</h1>
+          <h1 ref={titleRef} tabIndex={-1}>{result.title}</h1>
           <p className="museum-subtitle">{result.subtitle}</p>
           <div className="label-rule" />
           <div className="exhibit-live" aria-live="polite" aria-atomic="true">
@@ -202,15 +215,17 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
           <span className="sr-only" aria-live="polite">{isTouring ? `Guided tour playing exhibit ${exhibit.number}` : visited.length === result.exhibits.length ? 'All three exhibits visited.' : ''}</span>
           {cardError && <p className="card-error" role="alert">{cardError}</p>}
           {shareError && <p className="card-error" role="alert">{shareError}</p>}
+          {shareFallbackUrl && <label className="share-fallback">Museum link<input value={shareFallbackUrl} readOnly onFocus={(event) => event.currentTarget.select()} /></label>}
           <div className="exhibit-pagination" aria-label="Exhibit catalogue">
             {result.exhibits.map((item, index) => <button key={item.number} onClick={() => selectExhibit(index)} className={index === activeExhibit ? 'active' : ''} aria-label={`Show exhibit ${item.number}`} aria-pressed={index === activeExhibit}>{item.number}</button>)}
           </div>
-          <details className="behind-exhibit">
-            <summary><span><Cpu size={15} /> Behind the exhibit</span><small>{dioramaMode === 'living' ? 'WebGL image relief' : 'Performance still'}</small><ChevronDown size={14} /></summary>
+          <details className="behind-exhibit" open>
+            <summary><span><Cpu size={15} /> Behind the exhibit</span><small>{dioramaMode === 'living' ? 'Living 2.5D' : 'Performance still'}</small><ChevronDown size={14} /></summary>
             <p>{hasMappedExhibits ? 'OpenAI builds the room from your photograph, reads the finished render to map three visible exhibits, then hands it to an adaptive Three.js presentation. The uploaded source is removed from storage after the render handoff.' : 'OpenAI built this room from your photograph. The visual curator could not safely map markers, so the room opens with its interpretive labels instead. The uploaded source is removed after render handoff.'}</p>
             <div className="tech-pipeline" aria-label="Museum generation pipeline">
-              <span>Photo</span><ArrowRight aria-hidden="true" /><span>Generated room</span><ArrowRight aria-hidden="true" /><span>{hasMappedExhibits ? 'Vision mapping' : 'Safe labels'}</span><ArrowRight aria-hidden="true" /><span>WebGL view</span>
+              <span>Photo</span><ArrowRight aria-hidden="true" /><span>Generated room</span><ArrowRight aria-hidden="true" /><span>{hasMappedExhibits ? 'Vision coordinates' : 'Safe labels'}</span><ArrowRight aria-hidden="true" /><span>Adaptive 2.5D</span>
             </div>
+            <div className="build-evidence"><span>2 multimodal passes</span><span>Strict structured output</span><span>D1 + R2 persistence</span></div>
             <a className="save-render" href={result.imageUrl} download={`${slugify(result.title)}-museum.jpg`}><Download size={13} /> Save full museum render</a>
           </details>
         </aside>
