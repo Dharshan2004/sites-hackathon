@@ -105,11 +105,13 @@ h1 em { color: #d34a2f; font-weight: 400; }
 .curation-controls > input { width: 100%; border: 0; border-bottom: 1px solid #5b584f; padding: 8px 0 12px; color: #f2efe7; background: transparent; font-family: var(--font-display); font-size: 23px; outline: none; }
 .curation-controls > input:focus { border-color: #ea6549; }
 .curation-controls fieldset { margin: 28px 0 22px; padding: 0; border: 0; }
-.lens-grid { display: grid; gap: 7px; }
-.lens { width: 100%; padding: 11px 12px; display: flex; align-items: baseline; justify-content: space-between; gap: 14px; border: 1px solid #3c3a34; color: #c9c4b9; background: transparent; text-align: left; }
+.lens-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.lens { width: 100%; min-height: 57px; padding: 9px 10px; display: flex; flex-direction: column; justify-content: center; gap: 4px; border: 1px solid #3c3a34; color: #c9c4b9; background: transparent; text-align: left; }
 .lens span { font-family: var(--font-display); font-size: 15px; }
 .lens small { color: #77736b; font-size: 9px; }
 .lens.active { border-color: #ea6549; color: #fff7e8; background: rgba(234,101,73,.1); }
+.roulette-button { width: 100%; margin-top: 8px; padding: 8px 10px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 0; color: #aaa59a; background: transparent; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.roulette-button:hover { color: #ea6549; }
 .curate-button { width: 100%; min-height: 46px; border-radius: 0; background: #ea6549; color: #171713; font-weight: 800; }
 .curate-button:hover { background: #ff7a5d; }
 .selected-file { margin: 10px 0 0; color: #67635b; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -36,7 +36,7 @@ async function createCuration(apiKey: string, bytes: Uint8Array, mime: string, t
       input: [{
         role: 'user',
         content: [
-          { type: 'input_text', text: `Curate this photograph as a tiny ${lens} museum titled “${title}”. Describe only visible details. Never identify people, infer relationships, or invent sensitive facts. Return three concise exhibit labels with hotspot positions as percentages.` },
+          { type: 'input_text', text: `Curate this photograph as an exhibition inside a ${lens} architecture museum titled “${title}”. Each of the three exhibits must refer to a different, clearly visible detail in the photograph. Describe only visible details. Never identify people, infer relationships, or invent sensitive facts. Return three concise museum labels with hotspot positions as percentages.` },
           { type: 'input_image', image_url: `data:${mime};base64,${bytesToBase64(bytes)}` },
         ],
       }],
@@ -79,9 +79,14 @@ async function createCuration(apiKey: string, bytes: Uint8Array, mime: string, t
 
 async function createDiorama(apiKey: string, source: File, lens: string) {
   const direction = {
-    poetic: 'quiet, intimate, warm amber light, tactile wood and plaster, with the emotional tone of a cherished memory',
-    cinematic: 'dramatic but elegant, with controlled contrast, volumetric gallery light, and a strong visual journey through the room',
-    future: 'a refined speculative archive, with museum-grade glass, restrained luminous accents, and archaeological precision',
+    gothic: 'Gothic architecture: pointed arches, ribbed vaults, tracery, stained-glass colour, carved stone, gargoyle motifs, and dramatic pools of darkness',
+    'art-deco': 'Art Deco architecture: strict symmetry, stepped geometry, brass and black lacquer, sunburst motifs, polished stone, and glamorous 1920s illumination',
+    'art-nouveau': 'Art Nouveau architecture: flowing botanical ironwork, vines, flowers, curved ornamental lines, coloured glass, and organic spatial rhythm',
+    brutalism: 'Brutalist architecture: monumental exposed concrete, deep geometric voids, massive cantilevers, raw texture, and stark directional light',
+    bauhaus: 'Bauhaus architecture: functional grids, primary red yellow and blue accents, circles and rectangles, clean white planes, steel, and balanced asymmetry',
+    moorish: 'Moorish architecture: horseshoe arches, intricate non-figurative geometry, carved plaster, mosaic tile, courtyards, and repeating patterns handled with cultural respect',
+    'ancient-egyptian': 'Ancient Egyptian monumental architecture: sandstone pylons, papyrus columns, gold accents, processional symmetry, sacred solar geometry, and historically inspired non-readable relief patterns',
+    solarpunk: 'Neo-futurist solarpunk architecture: sweeping white curves, planted terraces, translucent solar surfaces, living greenery, daylight, water, and optimistic regenerative design',
   }[lens] ?? 'warm, intimate, and museum-like';
   const body = new FormData();
   body.append('model', 'gpt-image-2');

@@ -2,23 +2,28 @@
 
 import { ChangeEvent, DragEvent, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
-import { Aperture, ArrowRight, ImagePlus, LockKeyhole, Sparkles, Ticket, X } from 'lucide-react';
+import { Aperture, ArrowRight, Dices, ImagePlus, LockKeyhole, Sparkles, Ticket, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MuseumExhibition } from '@/components/museum-exhibition';
 import type { MuseumRecord } from '@/lib/museum';
 
-type Lens = 'poetic' | 'cinematic' | 'future';
-const lenses: Array<{ id: Lens; label: string; note: string }> = [
-  { id: 'poetic', label: 'Poetic', note: 'Memory, feeling, small details' },
-  { id: 'cinematic', label: 'Cinematic', note: 'Drama, composition, atmosphere' },
-  { id: 'future', label: 'Future archive', note: 'How tomorrow might remember it' },
+type Architecture = 'gothic' | 'art-deco' | 'art-nouveau' | 'brutalism' | 'bauhaus' | 'moorish' | 'ancient-egyptian' | 'solarpunk';
+const architectures: Array<{ id: Architecture; label: string; world: string }> = [
+  { id: 'gothic', label: 'Gothic', world: 'Cathedral of Shadows' },
+  { id: 'art-deco', label: 'Art Deco', world: 'Golden Metropolis' },
+  { id: 'art-nouveau', label: 'Art Nouveau', world: 'Garden of Lines' },
+  { id: 'brutalism', label: 'Brutalism', world: 'Concrete Giant' },
+  { id: 'bauhaus', label: 'Bauhaus', world: 'Primary Playground' },
+  { id: 'moorish', label: 'Moorish', world: 'Infinite Palace' },
+  { id: 'ancient-egyptian', label: 'Ancient Egyptian', world: 'Temple of the Sun' },
+  { id: 'solarpunk', label: 'Neo-futurism', world: 'Tomorrow Is Growing' },
 ];
 
 export function MuseumBuilder() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [lens, setLens] = useState<Lens>('poetic');
+  const [architecture, setArchitecture] = useState<Architecture>('art-deco');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState<'idle' | 'curating' | 'ready'>('idle');
   const [result, setResult] = useState<MuseumRecord | null>(null);
@@ -48,7 +53,7 @@ export function MuseumBuilder() {
     try {
       const upload = await prepareImageUpload(file);
       const form = new FormData();
-      form.append('photo', upload); form.append('title', title.trim()); form.append('lens', lens);
+      form.append('photo', upload); form.append('title', title.trim()); form.append('lens', architecture);
       const response = await fetch('/api/museums', { method: 'POST', body: form });
       const body = await response.text();
       let payload: MuseumRecord & { error?: string };
@@ -91,7 +96,9 @@ export function MuseumBuilder() {
               <div className="photo-frame"><Image src={imageUrl} alt="Your selected museum source" fill sizes="(max-width: 560px) 100vw, 30vw" unoptimized /><button className="remove-photo" onClick={clearPhoto}><X size={16} /></button><div className="frame-index">SOURCE / 001</div></div>
               <div className="curation-controls">
                 <label htmlFor="museum-title">Name this moment</label><input id="museum-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Sunday, just before the rain" />
-                <fieldset><legend>Choose a curatorial lens</legend><div className="lens-grid">{lenses.map((item) => <button type="button" key={item.id} className={lens === item.id ? 'lens active' : 'lens'} onClick={() => setLens(item.id)}><span>{item.label}</span><small>{item.note}</small></button>)}</div></fieldset>
+                <fieldset><legend>Choose an architectural world</legend><div className="lens-grid">{architectures.map((item) => <button type="button" key={item.id} className={architecture === item.id ? 'lens active' : 'lens'} onClick={() => setArchitecture(item.id)}><span>{item.label}</span><small>{item.world}</small></button>)}</div>
+                  <button type="button" className="roulette-button" onClick={() => { const choices = architectures.filter((item) => item.id !== architecture); setArchitecture(choices[Math.floor(Math.random() * choices.length)].id); }}><Dices size={14} /> Surprise me</button>
+                </fieldset>
                 <Button className="curate-button" size="lg" disabled={!title.trim() || status === 'curating'} onClick={curate}><Sparkles /> Curate my museum <ArrowRight /></Button>
                 {error && <p className="form-error" role="alert">{error}</p>}
               </div>

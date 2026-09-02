@@ -54,7 +54,7 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
         </div>
       </nav>
       <section className="museum-room">
-        <div className="room-header"><span>Unlisted collection / {result.id.slice(0, 8)}</span><span>{result.lens} lens</span></div>
+        <div className="room-header"><span>Unlisted collection / {result.id.slice(0, 8)}</span><span>{result.lens.replaceAll('-', ' ')} architecture</span></div>
         <div className="diorama-stage">
           <LivingDiorama src={result.imageUrl} alt={`The miniature museum of ${result.title}`} focus={{ x: exhibit.x, y: exhibit.y }} />
           <div className="stage-vignette" />
