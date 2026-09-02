@@ -8,5 +8,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!row) return new Response('Not found', { status: 404 });
   const object = await bindings.FILES.get(row.render_key);
   if (!object) return new Response('Not found', { status: 404 });
-  return new Response(object.body, { headers: { 'Content-Type': object.httpMetadata?.contentType || 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable' } });
+  return new Response(object.body, { headers: { 'Content-Type': object.httpMetadata?.contentType || 'image/png', 'Cache-Control': 'public, max-age=31536000, immutable', 'Access-Control-Allow-Origin': '*' } });
+}
+
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS' } });
 }

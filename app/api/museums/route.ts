@@ -3,6 +3,12 @@ import { fallbackMuseum } from '@/lib/museum';
 
 type Bindings = { DB: D1Database; FILES: R2Bucket; OPENAI_API_KEY?: string };
 
+const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
+
+function json(data: unknown, init?: ResponseInit) {
+  return Response.json(data, { ...init, headers: corsHeaders });
+}
+
 const createTableSql = `CREATE TABLE IF NOT EXISTS museums (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
@@ -69,9 +75,9 @@ export async function POST(request: Request) {
   const title = (typeof rawTitle === 'string' ? rawTitle : 'Untitled moment').slice(0, 80);
   const lens = (typeof rawLens === 'string' ? rawLens : 'art-deco').slice(0, 24);
   if (!(photo instanceof File) || !photo.type.startsWith('image/') || photo.size > 900 * 1024) {
-    return Response.json({ error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
+    return json({ error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
   }
-  if (!bindings.OPENAI_API_KEY) return Response.json({ error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
+  if (!bindings.OPENAI_API_KEY) return json({ error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
 
   const id = crypto.randomUUID();
   const sourceBytes = new Uint8Array(await photo.arrayBuffer());
@@ -109,8 +115,12 @@ export async function POST(request: Request) {
     await bindings.DB.prepare(`INSERT INTO museums (id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, NULL, ?)`).bind(
       id, title, fallback.subtitle, lens, sourceKey, renderKey, JSON.stringify(fallback.exhibits), renderResponseId, curationResponseId, Date.now(),
     ).run();
-    return Response.json({ id, status: 'processing', message: 'The gallery architects are at work.' }, { status: 202 });
+    return json({ id, status: 'processing', message: 'The gallery architects are at work.' }, { status: 202 });
   } catch {
-    return Response.json({ error: 'The museum could not start rendering. Check the API key and try again.' }, { status: 502 });
+    return json({ error: 'The museum could not start rendering. Check the API key and try again.' }, { status: 502 });
   }
+}
+
+export function OPTIONS() {
+  return new Response(null, { status: 204, headers: { ...corsHeaders, 'Access-Control-Allow-Methods': 'POST, OPTIONS' } });
 }

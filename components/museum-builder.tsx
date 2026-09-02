@@ -6,6 +6,7 @@ import { Aperture, ArrowRight, Dices, ImagePlus, LockKeyhole, Sparkles, Ticket, 
 import { Button } from '@/components/ui/button';
 import { MuseumExhibition } from '@/components/museum-exhibition';
 import type { MuseumRecord } from '@/lib/museum';
+import { siteUrl } from '@/lib/site-url';
 
 type Architecture = 'gothic' | 'art-deco' | 'art-nouveau' | 'brutalism' | 'bauhaus' | 'moorish' | 'ancient-egyptian' | 'solarpunk';
 const architectures: Array<{ id: Architecture; label: string; world: string }> = [
@@ -56,7 +57,7 @@ export function MuseumBuilder() {
       setProgress('Sending the miniature plans to the gallery architects.');
       const form = new FormData();
       form.append('photo', upload); form.append('title', title.trim()); form.append('lens', architecture);
-      const response = await fetch('/api/museums', { method: 'POST', body: form });
+      const response = await fetch(siteUrl('/api/museums'), { method: 'POST', body: form });
       const body = await response.text();
       let payload: MuseumRecord & { error?: string; status?: string; message?: string };
       try { payload = JSON.parse(body) as MuseumRecord & { error?: string; status?: string; message?: string }; }
@@ -65,6 +66,7 @@ export function MuseumBuilder() {
       if (payload.status !== 'processing' || !payload.id) throw new Error('The museum job did not start correctly.');
       setProgress(payload.message || 'Constructing your architectural world.');
       const museum = await waitForMuseum(payload.id, setProgress);
+      museum.imageUrl = siteUrl(museum.imageUrl);
       setResult(museum); setStatus('ready');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The museum could not be curated.');
@@ -152,7 +154,7 @@ async function waitForMuseum(id: string, report: (message: string) => void): Pro
   for (let attempt = 0; attempt < 80; attempt += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 2500));
     try {
-      const response = await fetch(`/api/museums/${id}/status`, { cache: 'no-store' });
+      const response = await fetch(siteUrl(`/api/museums/${id}/status`), { cache: 'no-store' });
       const text = await response.text();
       const payload = JSON.parse(text) as MuseumRecord & { error?: string; status?: string; message?: string };
       if (response.ok && response.status !== 202) return payload;
@@ -162,7 +164,7 @@ async function waitForMuseum(id: string, report: (message: string) => void): Pro
     } catch (caught) {
       transientFailures += 1;
       if (caught instanceof Error && !(caught instanceof TypeError) && !caught.message.toLowerCase().includes('network')) throw caught;
-      if (transientFailures >= 3) throw new Error('The connection was interrupted while checking the museum. Please try again.');
+      if (transientFailures >= 8) throw new Error('The connection was interrupted while checking the museum. Please try again.');
       report('Reconnecting to the gallery workshop.');
     }
   }

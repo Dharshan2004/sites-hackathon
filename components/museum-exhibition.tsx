@@ -6,6 +6,7 @@ import { Aperture, ArrowLeft, Check, Download, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { MuseumRecord } from '@/lib/museum';
 import { LivingDiorama } from '@/components/living-diorama';
+import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
 export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; onReset?: () => void }) {
   const [activeExhibit, setActiveExhibit] = useState(0);
@@ -13,7 +14,8 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
   const exhibit = result.exhibits[activeExhibit];
 
   async function shareMuseum() {
-    const url = `${window.location.origin}/museum/${result.id}`;
+    const origin = window.location.hostname.endsWith('.chatgpt.site') ? PUBLIC_SITE_ORIGIN : window.location.origin;
+    const url = `${origin}/museum/${result.id}`;
     if (navigator.share) {
       try { await navigator.share({ title: result.title, text: 'Visit my One Minute Museum', url }); return; } catch { /* fall through */ }
     }
