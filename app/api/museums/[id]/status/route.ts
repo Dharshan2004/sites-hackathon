@@ -1,6 +1,5 @@
 import { env } from 'cloudflare:workers';
 import type { MuseumExhibit } from '@/lib/museum';
-import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
 type Bindings = { DB: D1Database; FILES: R2Bucket; OPENAI_API_KEY?: string };
 
@@ -271,12 +270,7 @@ function curationRequest(row: MuseumJob, imageUrl: string) {
   };
 }
 
-async function finalRenderInput(request: Request, bindings: Bindings, row: MuseumJob) {
-  const requestUrl = new URL(request.url);
-  if (requestUrl.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(requestUrl.hostname)) {
-    return `${PUBLIC_SITE_ORIGIN}/api/museums/${row.id}/image`;
-  }
-
+async function finalRenderInput(bindings: Bindings, row: MuseumJob) {
   const object = await bindings.FILES.get(row.render_key);
   if (!object) throw new Error('The finished render is missing from storage.');
   const bytes = new Uint8Array(await object.arrayBuffer());
@@ -341,14 +335,14 @@ async function continueRender(bindings: Bindings, row: MuseumJob) {
   return processing(row.id, 'The room is built. Positioning each exhibit on the finished gallery.');
 }
 
-async function startCuration(request: Request, bindings: Bindings, row: MuseumJob) {
-  const claimed = await bindings.DB.prepare("UPDATE museums SET status = 'curation_starting', phase_updated_at = ? WHERE id = ? AND status = 'rendered' AND curation_response_id IS NULL")
-    .bind(Date.now(), row.id)
+async function startCuration(_request: Request, bindings: Bindings, row: MuseumJob) {
+  const claimed = await bindings.DB.prepare("UPDATE museums SET status = 'curation_starting' WHERE id = ? AND status = 'rendered' AND curation_response_id IS NULL")
+    .bind(row.id)
     .run();
   if ((claimed.meta.changes ?? 0) !== 1) return processing(row.id, 'The curator is entering the finished room.');
 
   try {
-    const imageUrl = await finalRenderInput(request, bindings, row);
+    const imageUrl = await finalRenderInput(bindings, row);
     const responseId = await startBackgroundResponse(bindings.OPENAI_API_KEY as string, curationRequest(row, imageUrl));
     const persisted = await bindings.DB.prepare("UPDATE museums SET curation_response_id = ?, status = 'curating', error = NULL, phase_updated_at = ? WHERE id = ? AND status = 'curation_starting' AND curation_response_id IS NULL")
       .bind(responseId, Date.now(), row.id)
@@ -418,7 +412,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (row.status === 'failed') {
     return json({ error: 'The AI could not finish this museum. Try another photograph or open the example.' }, { status: 502 });
   }
-  if (!bindings.OPENAI_API_KEY || !row.render_response_id) {
+  const phaseAge = Date.now() - (row.phase_updated_at ?? row.created_at);
+  const curationStatuses = new Set(['rendered', 'curation_starting', 'curating']);
+  if ((row.status === 'rendering' || (row.status === 'processing' && !row.curation_response_id)) && Date.now() - row.created_at > 7 * 60_000) {
+    return markFailed(bindings, row.id, 'Museum rendering exceeded its seven-minute deadline.');
+  }
+  if (curationStatuses.has(row.status) && phaseAge > 4 * 60_000) {
+    return finishWithFallbackCuration(bindings, row, 'Exhibit mapping exceeded its four-minute deadline.');
+  }
+  if (!bindings.OPENAI_API_KEY) {
+    if (curationStatuses.has(row.status)) return finishWithFallbackCuration(bindings, row, 'Visual curation is temporarily unavailable.');
+    return markFailed(bindings, row.id, 'This museum job cannot continue.');
+  }
+  if (!row.render_response_id) {
     return markFailed(bindings, row.id, 'This museum job cannot continue.');
   }
 
@@ -431,8 +437,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (row.status === 'curation_starting') {
       const phaseStarted = row.phase_updated_at ?? row.created_at;
       if (!row.curation_response_id && Date.now() - phaseStarted > 75_000) {
-        await bindings.DB.prepare("UPDATE museums SET status = 'rendered', phase_updated_at = ? WHERE id = ? AND status = 'curation_starting' AND curation_response_id IS NULL AND COALESCE(phase_updated_at, created_at) < ?")
-          .bind(Date.now(), row.id, Date.now() - 75_000)
+        await bindings.DB.prepare("UPDATE museums SET status = 'rendered' WHERE id = ? AND status = 'curation_starting' AND curation_response_id IS NULL AND COALESCE(phase_updated_at, created_at) < ?")
+          .bind(row.id, Date.now() - 75_000)
           .run();
       }
       return processing(row.id, 'The curator is entering the finished room.');
@@ -443,6 +449,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     console.error('Museum status check paused', error);
     if (error instanceof OpenAIRequestError && error.retryable) {
       return processing(row.id, 'OpenAI is briefly busy. Your museum is safe, and we will try again.', error.retryAfterMs);
+    }
+    if (curationStatuses.has(row.status)) {
+      return finishWithFallbackCuration(bindings, row, error instanceof Error ? error.message : 'Exhibit mapping could not finish.');
     }
     if (Date.now() - (row.phase_updated_at ?? row.created_at) > 8 * 60_000) {
       return markFailed(bindings, row.id, error instanceof Error ? error.message : 'Museum processing timed out.');

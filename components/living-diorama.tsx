@@ -17,8 +17,9 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
     onModeChange?.('still');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const compact = window.matchMedia('(max-width: 719px)').matches;
+    const precisePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
     const lowPower = navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 4;
-    if (!host || reducedMotion || compact || lowPower || !document.createElement('canvas').getContext('webgl2')) return;
+    if (!host || reducedMotion || compact || !precisePointer || lowPower || !document.createElement('canvas').getContext('webgl2')) return;
 
     let disposed = false;
     let frame = 0;
@@ -29,7 +30,7 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(32, host.clientWidth / host.clientHeight, 0.1, 100);
       camera.position.set(0, 0, 5.4);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
       renderer.setSize(host.clientWidth, host.clientHeight);
       renderer.setClearColor('#0d0d0a', 0);
@@ -146,7 +147,7 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
         host.removeEventListener('pointermove', onPointer); host.removeEventListener('pointerleave', onLeave); window.removeEventListener('resize', onResize);
         texture.dispose(); artwork.geometry.dispose(); artwork.material.dispose(); dustGeometry.dispose(); (particles.material as InstanceType<typeof THREE.PointsMaterial>).dispose(); renderer.dispose(); renderer.domElement.remove();
       };
-    });
+    }).catch(() => onModeChange?.('still'));
 
     return () => { disposed = true; cleanup(); };
   }, [onModeChange, src]);

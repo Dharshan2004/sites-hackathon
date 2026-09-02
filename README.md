@@ -1,15 +1,15 @@
 # One Minute Museum
 
-Turn any photograph into a miniature, interactive museum: an AI-curated isometric render, three explorable exhibits, an unlisted share link, and a downloadable 1080×1920 Story card.
+Turn any photograph into a miniature, interactive museum: choose from eight architectural worlds, explore three vision-mapped exhibits, invite visitors with an unlisted link, and export a 1080×1920 Story card with a QR doorway back inside.
 
 ## Local setup
 
 1. Use Node.js 22.13 or newer.
 2. Run `npm install`.
-3. Copy `.env.example` to `.env.local` and add `OPENAI_API_KEY`.
+3. Create `.env.local` and add `OPENAI_API_KEY`.
 4. Run `npm run dev`.
 
-The app uses ChatGPT Sites D1 (`DB`) for museum metadata and R2 (`FILES`) for uploaded and generated images. Three.js adds a subtle 2.5D parallax presentation on capable desktop devices; mobile and reduced-motion visitors receive the static render.
+The app uses ChatGPT Sites D1 (`DB`) for resumable museum metadata and R2 (`FILES`) for generated rooms. A second multimodal pass reads the finished render, writes grounded labels, and returns validated hotspot coordinates. Three.js adds a subtle 2.5D parallax presentation on capable desktop devices; touch, low-power, and reduced-motion visitors receive the static render.
 
 ## Working with a partner
 

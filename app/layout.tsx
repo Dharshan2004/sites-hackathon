@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   icons: { icon: '/favicon.svg' },
   openGraph: {
     title: 'One Minute Museum',
-    description: 'Turn a photograph into a tiny interactive exhibition in one minute.',
+    description: 'One photograph becomes an AI-curated miniature exhibition with three explorable exhibits.',
     url: PUBLIC_SITE_ORIGIN,
     siteName: 'One Minute Museum',
     type: 'website',
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'One Minute Museum',
-    description: 'Turn a photograph into a tiny interactive exhibition in one minute.',
+    description: 'One photograph becomes an AI-curated miniature exhibition with three explorable exhibits.',
     images: ['/og.png'],
   },
 };

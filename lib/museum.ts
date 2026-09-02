@@ -13,6 +13,7 @@ export type MuseumRecord = {
   lens: string;
   exhibits: MuseumExhibit[];
   imageUrl: string;
+  sourceUrl?: string;
   mapped?: boolean;
 };
 

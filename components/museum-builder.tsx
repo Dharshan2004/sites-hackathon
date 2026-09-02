@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { DragEvent } from 'react';
+import type { DragEvent, SyntheticEvent } from 'react';
 import Image from 'next/image';
-import { Aperture, ArrowRight, Dices, Eye, ImagePlus, LockKeyhole, Sparkles, Ticket, X } from 'lucide-react';
+import { Aperture, ArrowRight, Dices, Eye, ImagePlus, LockKeyhole, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { BlueprintWorkshop, type WorkshopPhase } from '@/components/blueprint-workshop';
 import { MuseumExhibition } from '@/components/museum-exhibition';
@@ -19,6 +19,9 @@ const activeJobKey = 'one-minute-museum.active-job';
 
 export function MuseumBuilder() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const uploadButtonRef = useRef<HTMLButtonElement>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
   const rouletteRun = useRef(0);
   const [file, setFile] = useState<File | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
@@ -33,6 +36,7 @@ export function MuseumBuilder() {
   const [progress, setProgress] = useState('Preparing your photograph.');
   const [progressPhase, setProgressPhase] = useState<WorkshopPhase>('preparing');
   const [startedAt, setStartedAt] = useState(() => Date.now());
+  const selectedWorld = ARCHITECTURES.find((item) => item.id === architecture) ?? ARCHITECTURES[0];
 
   useEffect(() => () => {
     rouletteRun.current += 1;
@@ -83,14 +87,21 @@ export function MuseumBuilder() {
 
   const finishReveal = useCallback(() => setStatus('ready'), []);
   const resetMuseum = useCallback(() => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
     setStatus('idle');
     setResult(null);
-  }, []);
+    setFile(null);
+    setImageUrl(null);
+    setTitle('');
+    setError('');
+    if (inputRef.current) inputRef.current.value = '';
+    window.requestAnimationFrame(() => uploadButtonRef.current?.focus());
+  }, [imageUrl]);
 
   function receiveFile(next?: File) {
     setIsDragging(false);
     if (!next) return;
-    if (!next.type.startsWith('image/')) {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(next.type)) {
       setError('Choose a JPG, PNG, or WEBP photograph.');
       return;
     }
@@ -103,6 +114,7 @@ export function MuseumBuilder() {
     setImageUrl(URL.createObjectURL(next));
     setTitle(next.name.replace(/\.[^.]+$/, '').replace(/[-_]/g, ' '));
     setError('');
+    window.requestAnimationFrame(() => titleRef.current?.focus());
   }
 
   function clearPhoto() {
@@ -114,6 +126,7 @@ export function MuseumBuilder() {
     setTitle('');
     setError('');
     if (inputRef.current) inputRef.current.value = '';
+    window.requestAnimationFrame(() => uploadButtonRef.current?.focus());
   }
 
   function chooseArchitecture(id: ArchitectureId) {
@@ -124,6 +137,13 @@ export function MuseumBuilder() {
 
   async function spinRoulette() {
     if (isRouletting) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const choices = ARCHITECTURES.filter((item) => item.id !== architecture);
+      const winner = choices[Math.floor(Math.random() * choices.length)] ?? ARCHITECTURES[0];
+      setArchitecture(winner.id);
+      setRouletteAnnouncement(`${winner.world} selected.`);
+      return;
+    }
     const run = rouletteRun.current + 1;
     rouletteRun.current = run;
     setIsRouletting(true);
@@ -159,6 +179,7 @@ export function MuseumBuilder() {
     setIsRouletting(false);
     setStatus('curating');
     setError('');
+    window.requestAnimationFrame(() => progressRef.current?.focus());
     const jobStartedAt = Date.now();
     setStartedAt(jobStartedAt);
     setProgressPhase('preparing');
@@ -192,6 +213,7 @@ export function MuseumBuilder() {
         setProgressPhase(phase);
       });
       museum.imageUrl = siteUrl(museum.imageUrl);
+      museum.sourceUrl = imageUrl ?? undefined;
       clearActiveJob();
       window.scrollTo({ top: 0, behavior: 'auto' });
       setResult(museum);
@@ -200,11 +222,17 @@ export function MuseumBuilder() {
       if (!isTransientError(caught)) clearActiveJob();
       setError(caught instanceof Error ? caught.message : 'The museum could not be curated.');
       setStatus('idle');
+      window.requestAnimationFrame(() => titleRef.current?.focus());
     }
   }
 
+  function submitCuration(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void curate();
+  }
+
   if ((status === 'ready' || status === 'revealing') && result) {
-    const exhibition = <MuseumExhibition result={result} onReset={resetMuseum} />;
+    const exhibition = <MuseumExhibition result={result} onReset={resetMuseum} focusOnMount />;
     return status === 'revealing'
       ? <OpeningNightReveal architecture={result.lens as ArchitectureId} onComplete={finishReveal}>{exhibition}</OpeningNightReveal>
       : exhibition;
@@ -214,17 +242,26 @@ export function MuseumBuilder() {
     <main className="museum-shell min-h-[100dvh]">
       <nav className="museum-nav">
         <a className="brand" href="#top"><span className="brand-mark"><Aperture size={18} strokeWidth={1.7} /></span><span>One Minute Museum</span></a>
-        <div className="nav-edition">Private exhibition builder</div>
+        <div className="nav-edition">AI exhibition studio</div>
       </nav>
       <section id="top" className="hero-grid">
         <div className="intro-copy">
-          <div className="eyebrow"><span /> Turn a moment into a museum</div>
-          <h1>Your photo<br />deserves a <em>gallery.</em></h1>
-          <p className="intro-text">Upload one photograph. We uncover its details, build a miniature world and open it for visitors.</p>
-          <div className="privacy-note"><LockKeyhole size={15} /><span>Unlisted by default. Only people with your link can visit.</span></div>
+          <div className="eyebrow"><span /> One photo · Eight worlds · Three exhibits</div>
+          <h1>Your photo<br />becomes a <em>museum.</em></h1>
+          <p className="intro-text">Choose an architectural world. AI preserves your moment, builds a miniature gallery around it, then turns three visible details into exhibits you can explore.</p>
+          <div className="hero-actions">
+            <Button ref={uploadButtonRef} type="button" className="hero-upload-button" size="lg" onClick={() => inputRef.current?.click()}><ImagePlus /> Choose a photo <ArrowRight /></Button>
+            <button type="button" className="hero-demo-button" onClick={tryExample}><Eye size={17} /><span><strong>Tour the live example</strong><small>20 seconds · no upload</small></span></button>
+          </div>
+          <div className="privacy-note"><LockKeyhole size={15} /><span>No account. Unlisted by default. Share only when you are ready.</span></div>
+          <div className="hero-pipeline" aria-label="How One Minute Museum works">
+            <span>Photo</span><ArrowRight aria-hidden="true" /><span>AI-built room</span><ArrowRight aria-hidden="true" /><span>Vision-mapped exhibits</span><ArrowRight aria-hidden="true" /><span>Living 2.5D tour</span>
+          </div>
         </div>
-        <div className="builder-card" aria-busy={status === 'curating'}>
-          {!imageUrl ? (
+        <div className="builder-card">
+          <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" tabIndex={-1} aria-hidden="true" onChange={(event) => receiveFile(event.target.files?.[0])} className="sr-only" />
+          <div className="builder-surface" inert={status === 'curating' ? true : undefined} aria-hidden={status === 'curating'}>
+            {!imageUrl ? (
             <div
               className={isDragging ? 'drop-zone is-dragging' : 'drop-zone'}
               onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
@@ -232,58 +269,62 @@ export function MuseumBuilder() {
               onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false); }}
               onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); receiveFile(event.dataTransfer.files?.[0]); }}
             >
+              <div className="studio-status"><span>01 / Source photograph</span><small>Usually 1–3 minutes</small></div>
               <button type="button" className="drop-zone-primary" onClick={() => inputRef.current?.click()}>
                 <div className="upload-icon"><ImagePlus size={26} strokeWidth={1.5} /></div>
-                <h2>Begin with a photograph</h2>
-                <p>Drop it here, or choose from your device</p>
-                <span className="file-note">JPG, PNG OR WEBP / OPTIMIZED ON YOUR DEVICE</span>
+                <h2>Choose a moment worth keeping</h2>
+                <p>Drop it here, or choose one from your device</p>
+                <span className="file-note">JPG, PNG OR WEBP · OPTIMIZED ON YOUR DEVICE</span>
               </button>
-              <div className="example-entry">
-                <div className="example-thumbnail"><Image src="/examples/art-deco-museum.jpg" alt="An Art Deco miniature museum example" fill sizes="96px" priority unoptimized /></div>
-                <div className="example-copy"><span>No photo ready?</span><strong>Tour a finished museum</strong></div>
-                <button type="button" onClick={tryExample}><Eye size={15} /> Open example</button>
-              </div>
-              <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => receiveFile(event.target.files?.[0])} className="sr-only" />
+              <div className="drop-zone-proof"><span>AI image generation</span><span>Spatial vision mapping</span><span>Shareable result</span></div>
+              {error && <p className="form-error" role="alert">{error}</p>}
             </div>
           ) : (
             <div className="photo-stage">
+              <div className="studio-status photo-stage-status"><span>02 / Curatorial direction</span><small>Make the room yours</small></div>
               <div className="photo-frame">
                 <Image src={imageUrl} alt="Your selected museum source" fill sizes="(max-width: 560px) 100vw, 30vw" unoptimized />
                 <button className="remove-photo" onClick={clearPhoto} aria-label="Remove photograph"><X size={16} /></button>
                 <div className="frame-index">SOURCE PHOTOGRAPH</div>
               </div>
-              <div className="curation-controls">
+              <form className="curation-controls" onSubmit={submitCuration}>
                 <label htmlFor="museum-title">Name this moment</label>
-                <input id="museum-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Sunday, just before the rain" />
+                <input ref={titleRef} id="museum-title" value={title} maxLength={80} aria-describedby="build-time" aria-invalid={Boolean(error)} onChange={(event) => setTitle(event.target.value)} placeholder="Sunday, just before the rain" />
                 <fieldset>
                   <legend>Choose an architectural world</legend>
                   <div className={isRouletting ? 'lens-grid is-rolling' : 'lens-grid'}>
                     {ARCHITECTURES.map((item) => (
-                      <button
-                        type="button"
+                      <label
                         key={item.id}
                         className={architecture === item.id ? 'lens active' : 'lens'}
-                        onClick={() => chooseArchitecture(item.id)}
-                        aria-pressed={architecture === item.id}
+                        data-world={item.id}
+                        aria-label={`Choose ${item.label}: ${item.world}`}
                       >
-                        <span>{item.label}</span><small>{item.world}</small>
-                      </button>
+                        <input type="radio" name="architecture" value={item.id} checked={architecture === item.id} onChange={() => chooseArchitecture(item.id)} className="sr-only" />
+                        <i className="lens-swatch" aria-hidden="true" />
+                        <span className="lens-copy"><strong>{item.label}</strong><small>{item.world}</small></span>
+                      </label>
                     ))}
                   </div>
                   <button type="button" className="roulette-button" disabled={isRouletting} onClick={spinRoulette}><Dices size={14} /> {isRouletting ? 'Choosing a world' : 'Surprise me'}</button>
                   <span className="sr-only" aria-live="polite">{rouletteAnnouncement}</span>
                 </fieldset>
-                <Button className="curate-button" size="lg" disabled={!title.trim() || status === 'curating' || isRouletting} onClick={curate}><Sparkles /> Curate my museum <ArrowRight /></Button>
-              </div>
+                <div className="world-summary"><span>{selectedWorld.world}</span><small>{selectedWorld.blueprint.material} · {selectedWorld.blueprint.light}</small></div>
+                <Button type="submit" className="curate-button" size="lg" disabled={!title.trim() || status === 'curating' || isRouletting}><Sparkles /> Build this museum <ArrowRight /></Button>
+                <p id="build-time" className="build-time">Usually 1–3 minutes. You can tour the example in another tab while it builds.</p>
+                {error && <p className="form-error" role="alert">{error}</p>}
+              </form>
             </div>
           )}
-          {error && <p className="form-error builder-error" role="alert">{error}</p>}
-          {status === 'curating' && <div className="curating-overlay"><BlueprintWorkshop architecture={architecture} progress={progress} phase={progressPhase} startedAt={startedAt} /></div>}
+          </div>
+          {status === 'curating' && <section ref={progressRef} className="curating-overlay" aria-label="Museum construction progress" tabIndex={-1}><BlueprintWorkshop architecture={architecture} progress={progress} phase={progressPhase} startedAt={startedAt} /></section>}
         </div>
       </section>
-      <section className="promise-strip" aria-label="What the museum includes">
-        <div className="promise-lead"><span>BUILT WITH OPENAI VISION + IMAGE GENERATION</span><strong>One photograph becomes an explorable miniature exhibition.</strong></div>
-        <div className="promise-keepsake"><Ticket size={20} /><p>Private link<br />Interactive exhibits<br />Story-ready card</p></div>
+      <section className="promise-strip" aria-label="What every museum includes">
+        <div><strong>01</strong><span>source photograph</span></div>
+        <div><strong>08</strong><span>architectural worlds</span></div>
+        <div><strong>03</strong><span>vision-mapped exhibits</span></div>
+        <div><strong>1080 × 1920</strong><span>Story card with visit link</span></div>
       </section>
     </main>
   );

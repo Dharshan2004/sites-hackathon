@@ -5,7 +5,13 @@ import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
 type Bindings = { DB: D1Database; FILES: R2Bucket; OPENAI_API_KEY?: string };
 
-const allowedOrigins = new Set([PUBLIC_SITE_ORIGIN, 'https://one-minute-museum.dharshanlab.chatgpt.site']);
+const allowedOrigins = new Set([
+  PUBLIC_SITE_ORIGIN,
+  'https://one-minute-museum.dharshanlab.chatgpt.site',
+  'http://localhost:3000',
+  'http://terminal.local:4173',
+]);
+const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxCreatesPerMinute = 12;
 const maxCreatesPerHour = 100;
 
@@ -20,6 +26,29 @@ function json(request: Request, data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   corsHeaders(request).forEach((value, key) => headers.set(key, value));
   return Response.json(data, { ...init, headers });
+}
+
+function isAllowedCreateRequest(request: Request) {
+  const origin = request.headers.get('Origin');
+  const fetchSite = request.headers.get('Sec-Fetch-Site');
+  if (fetchSite === 'cross-site') return false;
+  if (origin) return allowedOrigins.has(origin);
+  const referer = request.headers.get('Referer');
+  if (!referer) return false;
+  try {
+    return allowedOrigins.has(new URL(referer).origin);
+  } catch {
+    return false;
+  }
+}
+
+function hasValidImageSignature(bytes: Uint8Array, type: string) {
+  if (type === 'image/jpeg') return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (type === 'image/png') return bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+  if (type === 'image/webp') return bytes.length >= 12
+    && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
+    && String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP';
+  return false;
 }
 
 const createTableSql = `CREATE TABLE IF NOT EXISTS museums (
@@ -92,19 +121,29 @@ AVOID: no written text, captions, signage, logos, watermarks, UI, borders, crowd
 
 export async function POST(request: Request) {
   const bindings = env as unknown as Bindings;
+  if (!isAllowedCreateRequest(request)) {
+    return json(request, { error: 'Museum creation is only available from the exhibition studio.' }, { status: 403 });
+  }
+  const contentLength = Number(request.headers.get('Content-Length') ?? '0');
+  if (Number.isFinite(contentLength) && contentLength > 1_500_000) {
+    return json(request, { error: 'That upload is too large. Choose a smaller photograph.' }, { status: 413 });
+  }
   const form = await request.formData();
   const photo = form.get('photo');
   const rawTitle = form.get('title');
   const rawLens = form.get('lens');
   const title = (typeof rawTitle === 'string' ? rawTitle.trim() : '').slice(0, 80) || 'Untitled moment';
   const lens = getArchitecture(typeof rawLens === 'string' ? rawLens : 'art-deco').id;
-  if (!(photo instanceof File) || !photo.type.startsWith('image/') || photo.size > 900 * 1024) {
+  if (!(photo instanceof File) || !supportedImageTypes.has(photo.type) || photo.size > 900 * 1024) {
     return json(request, { error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
   }
   if (!bindings.OPENAI_API_KEY) return json(request, { error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
 
   const id = crypto.randomUUID();
   const sourceBytes = new Uint8Array(await photo.arrayBuffer());
+  if (!hasValidImageSignature(sourceBytes, photo.type)) {
+    return json(request, { error: 'That file does not appear to be a valid JPG, PNG, or WEBP photograph.' }, { status: 400 });
+  }
   const dataUrl = `data:${photo.type};base64,${bytesToBase64(sourceBytes)}`;
   const sourceKey = `museums/${id}/source.webp`;
   const renderKey = `museums/${id}/render.jpg`;
@@ -114,20 +153,27 @@ export async function POST(request: Request) {
   try {
     await bindings.DB.prepare(createTableSql).run();
     const now = Date.now();
-    const usage = await bindings.DB.prepare(`SELECT
-      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS minute_count,
-      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS hour_count
-      FROM museums WHERE status != 'failed'`)
-      .bind(now - 60_000, now - 60 * 60_000)
-      .first<{ minute_count: number | null; hour_count: number | null }>();
-    if ((usage?.minute_count ?? 0) >= maxCreatesPerMinute || (usage?.hour_count ?? 0) >= maxCreatesPerHour) {
+    const reserved = await bindings.DB.prepare(`INSERT INTO museums (id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, phase_updated_at, created_at)
+      SELECT ?, ?, ?, ?, ?, ?, ?, 'render_starting', NULL, NULL, NULL, ?, ?
+      WHERE (SELECT COUNT(*) FROM museums WHERE created_at >= ?) < ?
+        AND (SELECT COUNT(*) FROM museums WHERE created_at >= ?) < ?`).bind(
+      id,
+      title,
+      fallback.subtitle,
+      lens,
+      sourceKey,
+      renderKey,
+      JSON.stringify(fallback.exhibits),
+      now,
+      now,
+      now - 60_000,
+      maxCreatesPerMinute,
+      now - 60 * 60_000,
+      maxCreatesPerHour,
+    ).run();
+    if ((reserved.meta.changes ?? 0) !== 1) {
       return json(request, { error: 'The museum studio is at capacity right now. Tour the example and try your photograph again shortly.' }, { status: 429 });
     }
-
-    await bindings.FILES.put(sourceKey, sourceBytes, { httpMetadata: { contentType: photo.type } });
-    await bindings.DB.prepare(`INSERT INTO museums (id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, phase_updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'render_starting', NULL, NULL, NULL, ?, ?)`).bind(
-      id, title, fallback.subtitle, lens, sourceKey, renderKey, JSON.stringify(fallback.exhibits), now, now,
-    ).run();
     rowCreated = true;
 
     const renderResponseId = await startBackgroundResponse(bindings.OPENAI_API_KEY, {
