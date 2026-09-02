@@ -12,5 +12,6 @@ export const museums = sqliteTable('museums', {
   renderResponseId: text('render_response_id'),
   curationResponseId: text('curation_response_id'),
   error: text('error'),
+  phaseUpdatedAt: integer('phase_updated_at'),
   createdAt: integer('created_at').notNull(),
 });

@@ -15,6 +15,37 @@ export type MuseumRecord = {
   imageUrl: string;
 };
 
+export const exampleMuseum: MuseumRecord = {
+  id: 'example-art-deco-bicycle',
+  title: 'After the rain',
+  subtitle: 'A red bicycle holds the street still while the city catches its reflection.',
+  lens: 'art-deco',
+  imageUrl: '/examples/art-deco-museum.png',
+  exhibits: [
+    {
+      number: '01',
+      title: 'The wheel in waiting',
+      label: 'A bicycle wheel turns movement into a piece of still, brass-framed geometry.',
+      x: 22,
+      y: 55,
+    },
+    {
+      number: '02',
+      title: 'The colour of the corner',
+      label: 'Teal ceramic tiles preserve the cafe facade as a material memory.',
+      x: 78,
+      y: 55,
+    },
+    {
+      number: '03',
+      title: 'Rain keeps the light',
+      label: 'Red and cyan reflections turn wet pavement into an electric afterimage.',
+      x: 50,
+      y: 71,
+    },
+  ],
+};
+
 export function fallbackMuseum(title: string, lens: string): Omit<MuseumRecord, 'id' | 'imageUrl'> {
   const copy = {
     poetic: {

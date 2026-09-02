@@ -1,0 +1,1 @@
+ALTER TABLE `museums` ADD `phase_updated_at` integer;

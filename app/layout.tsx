@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'One Minute Museum — Turn a photo into an exhibition',
+  title: 'One Minute Museum | Turn a photo into an exhibition',
   description: 'Upload a photograph and curate it into a tiny interactive museum, complete with a shareable Story card.',
   openGraph: {
     title: 'One Minute Museum',
