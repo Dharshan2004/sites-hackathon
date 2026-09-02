@@ -13,6 +13,7 @@ export type MuseumRecord = {
   lens: string;
   exhibits: MuseumExhibit[];
   imageUrl: string;
+  mapped?: boolean;
 };
 
 export const exampleMuseum: MuseumRecord = {
@@ -20,7 +21,7 @@ export const exampleMuseum: MuseumRecord = {
   title: 'After the rain',
   subtitle: 'A red bicycle holds the street still while the city catches its reflection.',
   lens: 'art-deco',
-  imageUrl: '/examples/art-deco-museum.png',
+  imageUrl: '/examples/art-deco-museum.jpg',
   exhibits: [
     {
       number: '01',
@@ -47,7 +48,7 @@ export const exampleMuseum: MuseumRecord = {
 };
 
 export function fallbackMuseum(title: string, lens: string): Omit<MuseumRecord, 'id' | 'imageUrl'> {
-  const copy = {
+  const legacyCopy = {
     poetic: {
       subtitle: 'A small archive of light, distance, and what almost went unnoticed.',
       labels: [
@@ -72,9 +73,26 @@ export function fallbackMuseum(title: string, lens: string): Omit<MuseumRecord, 
         ['Unresolved object', 'Its purpose is uncertain; its emotional value appears unusually high.'],
       ],
     },
-  }[lens] ?? {
-    subtitle: 'A private moment, temporarily on exhibition.',
-    labels: [['The detail', 'A detail from the scene.'], ['The trace', 'A trace of the moment.'], ['The echo', 'What the scene leaves behind.']],
+  }[lens];
+
+  const architecturalSubtitles: Record<string, string> = {
+    gothic: 'A private memory held beneath stone, coloured light, and impossible height.',
+    'art-deco': 'A familiar moment recast in polished geometry, ceremony, and light.',
+    'art-nouveau': 'One photograph unfolds through botanical lines, glass, and quiet movement.',
+    brutalism: 'A small human moment finds scale inside concrete, shadow, and monumental form.',
+    bauhaus: 'The scene is distilled into colour, function, and a precise visual rhythm.',
+    moorish: 'A moment expands through patterned light, carved surfaces, and repeating space.',
+    'ancient-egyptian': 'The everyday becomes ceremonial along an axis of sandstone, gold, and sun.',
+    solarpunk: 'A memory from today is preserved inside a greener, more generous tomorrow.',
+  };
+
+  const copy = legacyCopy ?? {
+    subtitle: architecturalSubtitles[lens] ?? 'A private moment, temporarily on exhibition.',
+    labels: [
+      ['The anchor', 'The central subject holds the room together and gives every other detail its meaning.'],
+      ['A material memory', 'Colour and texture leave the photograph to become an object of their own.'],
+      ['Light left behind', 'The atmosphere of the original moment returns as the final installation.'],
+    ],
   };
 
   return {

@@ -40,34 +40,79 @@ const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
 const failedStatuses = new Set(['failed', 'cancelled', 'incomplete']);
 const jobSelect = 'SELECT id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, phase_updated_at, created_at FROM museums WHERE id = ?';
 
+class OpenAIRequestError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfterMs: number) {
+    super(message);
+    this.name = 'OpenAIRequestError';
+  }
+
+  get retryable() {
+    return this.status === 429 || this.status >= 500;
+  }
+}
+
+function isReadyStatus(status: string | undefined) {
+  return status === 'ready' || status === 'ready_unmapped';
+}
+
 function json(data: unknown, init?: ResponseInit) {
   const headers = new Headers(init?.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   return Response.json(data, { ...init, headers });
 }
 
-function processing(id: string, message: string) {
-  return json({ id, status: 'processing', message }, { status: 202 });
+function processing(id: string, message: string, retryAfterMs?: number) {
+  const headers = retryAfterMs ? { 'Retry-After': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) } : undefined;
+  return json({ id, status: 'processing', message, retryAfterMs }, { status: 202, headers });
 }
 
 async function retrieve(apiKey: string, id: string) {
-  const response = await fetch(`https://api.openai.com/v1/responses/${encodeURIComponent(id)}`, {
+  const response = await fetchWithDeadline(`https://api.openai.com/v1/responses/${encodeURIComponent(id)}`, {
     headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  const payload = await response.json() as OpenAIResponse;
-  if (!response.ok) throw new Error(payload.error?.message || `OpenAI status failed (${response.status})`);
+  }, 18_000);
+  const text = await response.text();
+  let payload: OpenAIResponse = {};
+  try { payload = JSON.parse(text) as OpenAIResponse; } catch { /* The status below still controls retry behavior. */ }
+  if (!response.ok) throw new OpenAIRequestError(
+    payload.error?.message || `OpenAI status failed (${response.status})`,
+    response.status,
+    retryDelay(response),
+  );
+  if (!text) throw new Error('OpenAI returned an empty status response.');
   return payload;
 }
 
 async function startBackgroundResponse(apiKey: string, payload: Record<string, unknown>) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetchWithDeadline('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, background: true, store: true }),
-  });
-  const result = await response.json() as { id?: string; error?: { message?: string } };
-  if (!response.ok || !result.id) throw new Error(result.error?.message || `OpenAI request failed (${response.status})`);
+  }, 30_000);
+  const text = await response.text();
+  let result: { id?: string; error?: { message?: string } } = {};
+  try { result = JSON.parse(text) as { id?: string; error?: { message?: string } }; } catch { /* The status below still controls retry behavior. */ }
+  if (!response.ok) throw new OpenAIRequestError(
+    result.error?.message || `OpenAI request failed (${response.status})`,
+    response.status,
+    retryDelay(response),
+  );
+  if (!result.id) throw new Error('OpenAI did not return a response reference.');
   return result.id;
+}
+
+function retryDelay(response: Response) {
+  const retryAfter = Number.parseFloat(response.headers.get('Retry-After') ?? '');
+  return Number.isFinite(retryAfter) ? Math.min(60_000, Math.max(5_000, retryAfter * 1000)) : 12_000;
+}
+
+async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit, timeout: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('OpenAI request timed out.', 'TimeoutError')), timeout);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function decodeBase64(encoded: string) {
@@ -109,34 +154,38 @@ function readyRecord(row: MuseumJob) {
     exhibits: JSON.parse(row.exhibits_json) as MuseumExhibit[],
     imageUrl: `/api/museums/${row.id}/image`,
     generated: true,
+    mapped: row.status === 'ready',
   };
 }
 
 function validateCuration(text: string): CurationPayload {
   const parsed = JSON.parse(text) as Partial<CurationPayload>;
-  const subtitle = typeof parsed.subtitle === 'string' ? parsed.subtitle.trim() : '';
-  if (subtitle.length < 4 || subtitle.length > 260 || !Array.isArray(parsed.exhibits) || parsed.exhibits.length !== 3) {
+  const subtitle = typeof parsed.subtitle === 'string' ? parsed.subtitle.trim().slice(0, 260) : '';
+  if (subtitle.length < 4 || !Array.isArray(parsed.exhibits) || parsed.exhibits.length !== 3) {
     throw new Error('The curator returned an incomplete exhibition.');
   }
 
   const exhibits = parsed.exhibits.map((candidate, index) => {
-    const title = typeof candidate?.title === 'string' ? candidate.title.trim() : '';
-    const label = typeof candidate?.label === 'string' ? candidate.label.trim() : '';
+    const title = typeof candidate?.title === 'string' ? candidate.title.trim().slice(0, 90) : '';
+    const label = typeof candidate?.label === 'string' ? candidate.label.trim().slice(0, 300) : '';
     const x = candidate?.x;
     const y = candidate?.y;
-    if (!title || !label || title.length > 90 || label.length > 300 || !Number.isFinite(x) || !Number.isFinite(y)) {
+    if (!title || !label || !Number.isFinite(x) || !Number.isFinite(y)) {
       throw new Error(`Exhibit ${index + 1} is incomplete.`);
     }
-    if (x < 7 || x > 93 || y < 10 || y > 90) {
-      throw new Error(`Exhibit ${index + 1} is outside the finished render.`);
-    }
-    return { title, label, x, y };
+    return { title, label, x: Math.min(93, Math.max(7, x)), y: Math.min(90, Math.max(10, y)) };
   });
 
   for (let first = 0; first < exhibits.length; first += 1) {
     for (let second = first + 1; second < exhibits.length; second += 1) {
-      const distance = Math.hypot(exhibits[first].x - exhibits[second].x, exhibits[first].y - exhibits[second].y);
-      if (distance < 7) throw new Error('The curator placed two exhibits on the same object.');
+      let distance = Math.hypot(exhibits[first].x - exhibits[second].x, exhibits[first].y - exhibits[second].y);
+      let adjustment = 0;
+      while (distance < 7 && adjustment < 3) {
+        exhibits[second].x = Math.min(93, Math.max(7, exhibits[second].x + (second % 2 === 0 ? -8 : 8)));
+        exhibits[second].y = Math.min(90, Math.max(10, exhibits[second].y + (second % 2 === 0 ? 5 : -5)));
+        distance = Math.hypot(exhibits[first].x - exhibits[second].x, exhibits[first].y - exhibits[second].y);
+        adjustment += 1;
+      }
     }
   }
 
@@ -148,14 +197,24 @@ function numberedExhibits(exhibits: CurationPayload['exhibits']): MuseumExhibit[
 }
 
 async function markFailed(bindings: Bindings, id: string, reason: string) {
-  const failed = await bindings.DB.prepare("UPDATE museums SET status = 'failed', error = ?, phase_updated_at = ? WHERE id = ? AND status NOT IN ('ready', 'failed')")
+  const failed = await bindings.DB.prepare("UPDATE museums SET status = 'failed', error = ?, phase_updated_at = ? WHERE id = ? AND status NOT IN ('ready', 'ready_unmapped', 'failed')")
     .bind(reason.slice(0, 500), Date.now(), id)
     .run();
   if ((failed.meta.changes ?? 0) === 0) {
     const latest = await bindings.DB.prepare(jobSelect).bind(id).first<MuseumJob>();
-    if (latest?.status === 'ready') return json(readyRecord(latest));
+    if (isReadyStatus(latest?.status)) return json(readyRecord(latest as MuseumJob));
   }
   return json({ error: 'The AI could not finish this museum. Try another photograph or open the example.' }, { status: 502 });
+}
+
+async function finishWithFallbackCuration(bindings: Bindings, row: MuseumJob, reason: string) {
+  console.error('Museum curation fell back to the prepared labels', reason);
+  const completed = await bindings.DB.prepare("UPDATE museums SET status = 'ready_unmapped', error = ?, phase_updated_at = ? WHERE id = ? AND status IN ('rendered', 'curation_starting', 'curating')")
+    .bind(reason.slice(0, 500), Date.now(), row.id)
+    .run();
+  if ((completed.meta.changes ?? 0) === 1) return json(readyRecord({ ...row, status: 'ready_unmapped' }));
+  const latest = await bindings.DB.prepare(jobSelect).bind(row.id).first<MuseumJob>();
+  return isReadyStatus(latest?.status) ? json(readyRecord(latest as MuseumJob)) : markFailed(bindings, row.id, reason);
 }
 
 function curationPrompt(row: MuseumJob) {
@@ -296,14 +355,19 @@ async function startCuration(request: Request, bindings: Bindings, row: MuseumJo
       .run();
     if ((persisted.meta.changes ?? 0) !== 1) {
       const latest = await bindings.DB.prepare(jobSelect).bind(row.id).first<MuseumJob>();
-      if (latest?.status === 'ready') return json(readyRecord(latest));
+      if (isReadyStatus(latest?.status)) return json(readyRecord(latest as MuseumJob));
       return processing(row.id, 'The curator is confirming the gallery handoff.');
     }
     return processing(row.id, 'The curator is placing three labels on the finished museum.');
   } catch (error) {
     console.error('Museum curation start failed', error);
-    if (error instanceof TypeError) return processing(row.id, 'The curator is reconnecting to the finished gallery.');
-    return markFailed(bindings, row.id, error instanceof Error ? error.message : 'Curation could not start.');
+    if (error instanceof OpenAIRequestError && error.retryable) {
+      return processing(row.id, 'OpenAI is briefly busy. The finished room is safe, and the curator will retry.', error.retryAfterMs);
+    }
+    if (error instanceof TypeError || (error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name))) {
+      return processing(row.id, 'The curator is reconnecting to the finished gallery.');
+    }
+    return finishWithFallbackCuration(bindings, row, error instanceof Error ? error.message : 'Curation could not start.');
   }
 }
 
@@ -311,17 +375,17 @@ async function continueCuration(bindings: Bindings, row: MuseumJob) {
   if (!row.curation_response_id) return markFailed(bindings, row.id, 'The curator response is missing.');
   const curation = await retrieve(bindings.OPENAI_API_KEY as string, row.curation_response_id);
   if (failedStatuses.has(curation.status ?? '')) {
-    return markFailed(bindings, row.id, curation.error?.message || curation.incomplete_details?.reason || 'Curation failed');
+    return finishWithFallbackCuration(bindings, row, curation.error?.message || curation.incomplete_details?.reason || 'Curation failed');
   }
   if (curation.status !== 'completed') return processing(row.id, 'Writing the wall labels and checking their positions.');
 
   const text = outputText(curation);
-  if (!text) return markFailed(bindings, row.id, 'Completed curation had no text.');
+  if (!text) return finishWithFallbackCuration(bindings, row, 'Completed curation had no text.');
   let curated: CurationPayload;
   try {
     curated = validateCuration(text);
   } catch (error) {
-    return markFailed(bindings, row.id, error instanceof Error ? error.message : 'Curation validation failed.');
+    return finishWithFallbackCuration(bindings, row, error instanceof Error ? error.message : 'Curation validation failed.');
   }
 
   const exhibits = numberedExhibits(curated.exhibits);
@@ -335,7 +399,7 @@ async function continueCuration(bindings: Bindings, row: MuseumJob) {
   const latest = await bindings.DB.prepare(jobSelect)
     .bind(row.id)
     .first<MuseumJob>();
-  return latest?.status === 'ready' ? json(readyRecord(latest)) : processing(row.id, 'Opening the finished exhibition.');
+  return isReadyStatus(latest?.status) ? json(readyRecord(latest as MuseumJob)) : processing(row.id, 'Opening the finished exhibition.');
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -350,7 +414,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   }
 
   if (!row) return json({ error: 'Museum not found.' }, { status: 404 });
-  if (row.status === 'ready') return json(readyRecord(row));
+  if (isReadyStatus(row.status)) return json(readyRecord(row));
   if (row.status === 'failed') {
     return json({ error: 'The AI could not finish this museum. Try another photograph or open the example.' }, { status: 502 });
   }
@@ -377,6 +441,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return markFailed(bindings, row.id, `Unknown museum state: ${row.status}`);
   } catch (error) {
     console.error('Museum status check paused', error);
+    if (error instanceof OpenAIRequestError && error.retryable) {
+      return processing(row.id, 'OpenAI is briefly busy. Your museum is safe, and we will try again.', error.retryAfterMs);
+    }
     if (Date.now() - (row.phase_updated_at ?? row.created_at) > 8 * 60_000) {
       return markFailed(bindings, row.id, error instanceof Error ? error.message : 'Museum processing timed out.');
     }

@@ -5,7 +5,7 @@ import type { DragEvent } from 'react';
 import Image from 'next/image';
 import { Aperture, ArrowRight, Dices, Eye, ImagePlus, LockKeyhole, Sparkles, Ticket, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BlueprintWorkshop } from '@/components/blueprint-workshop';
+import { BlueprintWorkshop, type WorkshopPhase } from '@/components/blueprint-workshop';
 import { MuseumExhibition } from '@/components/museum-exhibition';
 import { OpeningNightReveal } from '@/components/opening-night-reveal';
 import { ARCHITECTURES, type ArchitectureId } from '@/lib/architectures';
@@ -13,6 +13,9 @@ import { exampleMuseum, type MuseumRecord } from '@/lib/museum';
 import { siteUrl } from '@/lib/site-url';
 
 type BuilderStatus = 'idle' | 'curating' | 'revealing' | 'ready';
+type ActiveMuseumJob = { id: string; title: string; architecture: ArchitectureId; startedAt: number };
+
+const activeJobKey = 'one-minute-museum.active-job';
 
 export function MuseumBuilder() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -21,17 +24,62 @@ export function MuseumBuilder() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [architecture, setArchitecture] = useState<ArchitectureId>('art-deco');
   const [isRouletting, setIsRouletting] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [rouletteAnnouncement, setRouletteAnnouncement] = useState('');
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState<BuilderStatus>('idle');
   const [result, setResult] = useState<MuseumRecord | null>(null);
   const [error, setError] = useState('');
   const [progress, setProgress] = useState('Preparing your photograph.');
+  const [progressPhase, setProgressPhase] = useState<WorkshopPhase>('preparing');
+  const [startedAt, setStartedAt] = useState(() => Date.now());
 
   useEffect(() => () => {
     rouletteRun.current += 1;
     if (imageUrl) URL.revokeObjectURL(imageUrl);
   }, [imageUrl]);
+
+  useEffect(() => {
+    const saved = readActiveJob();
+    if (!saved) return;
+    const controller = new AbortController();
+    let active = true;
+    const resume = async () => {
+      await Promise.resolve();
+      if (!active) return;
+      setArchitecture(saved.architecture);
+      setTitle(saved.title);
+      setStartedAt(saved.startedAt);
+      setProgressPhase('rendering');
+      setProgress('Reopening the museum already in progress.');
+      setStatus('curating');
+
+      try {
+        const museum = await waitForMuseum(saved.id, (message, phase) => {
+          if (!active) return;
+          setProgress(message);
+          setProgressPhase(phase);
+        }, controller.signal);
+        if (!active) return;
+        museum.imageUrl = siteUrl(museum.imageUrl);
+        clearActiveJob();
+        window.scrollTo({ top: 0, behavior: 'auto' });
+        setResult(museum);
+        setStatus('revealing');
+      } catch (caught) {
+        if (!active || isAbortError(caught)) return;
+        if (!isTransientError(caught)) clearActiveJob();
+        setError(caught instanceof Error ? caught.message : 'The museum could not be reopened.');
+        setStatus('idle');
+      }
+    };
+    void resume();
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
   const finishReveal = useCallback(() => setStatus('ready'), []);
   const resetMuseum = useCallback(() => {
@@ -40,7 +88,12 @@ export function MuseumBuilder() {
   }, []);
 
   function receiveFile(next?: File) {
-    if (!next || !next.type.startsWith('image/')) return;
+    setIsDragging(false);
+    if (!next) return;
+    if (!next.type.startsWith('image/')) {
+      setError('Choose a JPG, PNG, or WEBP photograph.');
+      return;
+    }
     if (next.size > 40 * 1024 * 1024) {
       setError('That photo is over 40 MB. Choose a smaller one.');
       return;
@@ -96,6 +149,7 @@ export function MuseumBuilder() {
     setError('');
     setArchitecture('art-deco');
     setResult(exampleMuseum);
+    window.scrollTo({ top: 0, behavior: 'auto' });
     setStatus('revealing');
   }
 
@@ -105,15 +159,19 @@ export function MuseumBuilder() {
     setIsRouletting(false);
     setStatus('curating');
     setError('');
+    const jobStartedAt = Date.now();
+    setStartedAt(jobStartedAt);
+    setProgressPhase('preparing');
     setProgress('Optimizing your photograph on this device.');
     try {
       const upload = await prepareImageUpload(file);
+      setProgressPhase('rendering');
       setProgress('Sending the miniature plans to the gallery architects.');
       const form = new FormData();
       form.append('photo', upload);
       form.append('title', title.trim());
       form.append('lens', architecture);
-      const response = await fetch(siteUrl('/api/museums'), { method: 'POST', body: form });
+      const response = await fetchWithDeadline(siteUrl('/api/museums'), { method: 'POST', body: form }, 45_000);
       const body = await response.text();
       let payload: MuseumRecord & { error?: string; status?: string; message?: string };
       try {
@@ -127,12 +185,19 @@ export function MuseumBuilder() {
       }
       if (!response.ok) throw new Error(payload.error || 'The museum could not be curated.');
       if (payload.status !== 'processing' || !payload.id) throw new Error('The museum job did not start correctly.');
+      writeActiveJob({ id: payload.id, title: title.trim(), architecture, startedAt: jobStartedAt });
       setProgress(payload.message || 'Constructing your architectural world.');
-      const museum = await waitForMuseum(payload.id, setProgress);
+      const museum = await waitForMuseum(payload.id, (message, phase) => {
+        setProgress(message);
+        setProgressPhase(phase);
+      });
       museum.imageUrl = siteUrl(museum.imageUrl);
+      clearActiveJob();
+      window.scrollTo({ top: 0, behavior: 'auto' });
       setResult(museum);
       setStatus('revealing');
     } catch (caught) {
+      if (!isTransientError(caught)) clearActiveJob();
       setError(caught instanceof Error ? caught.message : 'The museum could not be curated.');
       setStatus('idle');
     }
@@ -146,7 +211,7 @@ export function MuseumBuilder() {
   }
 
   return (
-    <main className="museum-shell min-h-screen">
+    <main className="museum-shell min-h-[100dvh]">
       <nav className="museum-nav">
         <a className="brand" href="#top"><span className="brand-mark"><Aperture size={18} strokeWidth={1.7} /></span><span>One Minute Museum</span></a>
         <div className="nav-edition">Private exhibition builder</div>
@@ -158,11 +223,13 @@ export function MuseumBuilder() {
           <p className="intro-text">Upload one photograph. We uncover its details, build a miniature world and open it for visitors.</p>
           <div className="privacy-note"><LockKeyhole size={15} /><span>Unlisted by default. Only people with your link can visit.</span></div>
         </div>
-        <div className="builder-card">
+        <div className="builder-card" aria-busy={status === 'curating'}>
           {!imageUrl ? (
             <div
-              className="drop-zone"
+              className={isDragging ? 'drop-zone is-dragging' : 'drop-zone'}
+              onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
               onDragOver={(event) => event.preventDefault()}
+              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDragging(false); }}
               onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); receiveFile(event.dataTransfer.files?.[0]); }}
             >
               <button type="button" className="drop-zone-primary" onClick={() => inputRef.current?.click()}>
@@ -171,7 +238,11 @@ export function MuseumBuilder() {
                 <p>Drop it here, or choose from your device</p>
                 <span className="file-note">JPG, PNG OR WEBP / OPTIMIZED ON YOUR DEVICE</span>
               </button>
-              <div className="example-entry"><span>or enter through the staff door</span><button type="button" onClick={tryExample}><Eye size={15} /> Try an example</button></div>
+              <div className="example-entry">
+                <div className="example-thumbnail"><Image src="/examples/art-deco-museum.jpg" alt="An Art Deco miniature museum example" fill sizes="96px" priority unoptimized /></div>
+                <div className="example-copy"><span>No photo ready?</span><strong>Tour a finished museum</strong></div>
+                <button type="button" onClick={tryExample}><Eye size={15} /> Open example</button>
+              </div>
               <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => receiveFile(event.target.files?.[0])} className="sr-only" />
             </div>
           ) : (
@@ -203,11 +274,11 @@ export function MuseumBuilder() {
                   <span className="sr-only" aria-live="polite">{rouletteAnnouncement}</span>
                 </fieldset>
                 <Button className="curate-button" size="lg" disabled={!title.trim() || status === 'curating' || isRouletting} onClick={curate}><Sparkles /> Curate my museum <ArrowRight /></Button>
-                {error && <p className="form-error" role="alert">{error}</p>}
               </div>
             </div>
           )}
-          {status === 'curating' && <div className="curating-overlay"><BlueprintWorkshop architecture={architecture} progress={progress} /></div>}
+          {error && <p className="form-error builder-error" role="alert">{error}</p>}
+          {status === 'curating' && <div className="curating-overlay"><BlueprintWorkshop architecture={architecture} progress={progress} phase={progressPhase} startedAt={startedAt} /></div>}
         </div>
       </section>
       <section className="promise-strip" aria-label="What the museum includes">
@@ -256,20 +327,88 @@ function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Your browser could not prepare that photograph.')), 'image/webp', quality));
 }
 
-async function waitForMuseum(id: string, report: (message: string) => void): Promise<MuseumRecord> {
+class TransientMuseumError extends Error {}
+
+async function waitForMuseum(id: string, report: (message: string, phase: WorkshopPhase) => void, signal?: AbortSignal): Promise<MuseumRecord> {
+  let currentPhase: WorkshopPhase = 'rendering';
   for (let attempt = 0; attempt < 144; attempt += 1) {
     await pause(2500);
+    if (signal?.aborted) throw signal.reason ?? new DOMException('Cancelled', 'AbortError');
     try {
-      const response = await fetch(siteUrl(`/api/museums/${id}/status`), { cache: 'no-store' });
+      const response = await fetchWithDeadline(siteUrl(`/api/museums/${id}/status`), { cache: 'no-store', signal }, 45_000);
       const text = await response.text();
-      const payload = JSON.parse(text) as MuseumRecord & { error?: string; status?: string; message?: string };
+      let payload: MuseumRecord & { error?: string; status?: string; message?: string; retryAfterMs?: number };
+      try {
+        payload = JSON.parse(text) as MuseumRecord & { error?: string; status?: string; message?: string; retryAfterMs?: number };
+      } catch {
+        throw new TransientMuseumError(`The museum status service returned ${response.status}.`);
+      }
       if (response.ok && response.status !== 202) return payload;
-      if (!response.ok) throw new Error(payload.error || 'The museum render failed.');
-      report(payload.message || 'The museum is still taking shape.');
+      if (!response.ok) {
+        if ([429, 503, 504].includes(response.status)) throw new TransientMuseumError(payload.error || 'The museum status service is briefly unavailable.');
+        throw new Error(payload.error || 'The museum render failed.');
+      }
+      const message = payload.message || 'The museum is still taking shape.';
+      currentPhase = inferWorkshopPhase(message);
+      report(message, currentPhase);
+      if (payload.retryAfterMs && payload.retryAfterMs > 2500) await pause(Math.min(60_000, payload.retryAfterMs - 2500));
     } catch (caught) {
-      if (caught instanceof Error && !(caught instanceof TypeError) && !caught.message.toLowerCase().includes('network')) throw caught;
-      report('A status check was interrupted. The museum is safe, and we are reconnecting.');
+      if (signal?.aborted) throw signal.reason ?? caught;
+      if (!isTransientError(caught)) throw caught;
+      report('A status check paused. Your museum is safe, and we are reconnecting.', currentPhase);
     }
   }
-  throw new Error('This detailed museum is taking longer than expected. Please try again.');
+  throw new TransientMuseumError('This detailed museum is taking longer than expected. Refresh this page to keep waiting.');
+}
+
+async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit, timeout: number) {
+  const controller = new AbortController();
+  const upstream = init.signal;
+  const abortFromUpstream = () => controller.abort(upstream?.reason);
+  if (upstream?.aborted) abortFromUpstream(); else upstream?.addEventListener('abort', abortFromUpstream, { once: true });
+  const timer = window.setTimeout(() => controller.abort(new DOMException('The request timed out.', 'TimeoutError')), timeout);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+    upstream?.removeEventListener('abort', abortFromUpstream);
+  }
+}
+
+function inferWorkshopPhase(message: string): WorkshopPhase {
+  return /curator|label|position|map exhibit|finished room|gallery handoff|opening the finished/i.test(message) ? 'mapping' : 'rendering';
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError');
+}
+
+function isTransientError(error: unknown) {
+  if (error instanceof TransientMuseumError || error instanceof TypeError || isAbortError(error)) return true;
+  return error instanceof Error && /network|fetch|timed out|connection/i.test(error.message);
+}
+
+function readActiveJob(): ActiveMuseumJob | null {
+  try {
+    const value = window.localStorage.getItem(activeJobKey);
+    if (!value) return null;
+    const parsed = JSON.parse(value) as Partial<ActiveMuseumJob>;
+    const validArchitecture = ARCHITECTURES.some((item) => item.id === parsed.architecture);
+    if (typeof parsed.id !== 'string' || typeof parsed.title !== 'string' || typeof parsed.startedAt !== 'number' || !validArchitecture || Date.now() - parsed.startedAt > 20 * 60_000) {
+      clearActiveJob();
+      return null;
+    }
+    return parsed as ActiveMuseumJob;
+  } catch {
+    clearActiveJob();
+    return null;
+  }
+}
+
+function writeActiveJob(job: ActiveMuseumJob) {
+  try { window.localStorage.setItem(activeJobKey, JSON.stringify(job)); } catch { /* The job still continues without local recovery. */ }
+}
+
+function clearActiveJob() {
+  try { window.localStorage.removeItem(activeJobKey); } catch { /* Storage is optional. */ }
 }

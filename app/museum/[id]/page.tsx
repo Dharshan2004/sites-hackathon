@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { env } from 'cloudflare:workers';
 import { MuseumExhibition } from '@/components/museum-exhibition';
 import type { MuseumExhibit, MuseumRecord } from '@/lib/museum';
+import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
 type MuseumRow = {
   id: string;
@@ -32,23 +33,36 @@ const createTableSql = `CREATE TABLE IF NOT EXISTS museums (
 async function getMuseum(id: string): Promise<MuseumRecord | null> {
   const bindings = env as unknown as { DB: D1Database };
   await bindings.DB.prepare(createTableSql).run();
-  const row = await bindings.DB.prepare("SELECT id, title, subtitle, lens, exhibits_json, status FROM museums WHERE id = ? AND status = 'ready'").bind(id).first<MuseumRow>();
+  const row = await bindings.DB.prepare("SELECT id, title, subtitle, lens, exhibits_json, status FROM museums WHERE id = ? AND status IN ('ready', 'ready_unmapped')").bind(id).first<MuseumRow>();
   if (!row) return null;
-  return { id: row.id, title: row.title, subtitle: row.subtitle, lens: row.lens, exhibits: JSON.parse(row.exhibits_json) as MuseumExhibit[], imageUrl: `/api/museums/${row.id}/image` };
+  return { id: row.id, title: row.title, subtitle: row.subtitle, lens: row.lens, exhibits: JSON.parse(row.exhibits_json) as MuseumExhibit[], imageUrl: `/api/museums/${row.id}/image`, mapped: row.status === 'ready' };
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const museum = await getMuseum(id);
   if (!museum) return { title: 'Museum not found | One Minute Museum' };
-  const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL;
-  const trustedOrigin = configuredOrigin && /^https:\/\/[a-z0-9.-]+$/i.test(configuredOrigin) ? configuredOrigin.replace(/\/$/, '') : null;
-  const image = trustedOrigin ? `${trustedOrigin}/api/museums/${museum.id}/image` : undefined;
+  const pageUrl = `${PUBLIC_SITE_ORIGIN}/museum/${museum.id}`;
+  const image = `${PUBLIC_SITE_ORIGIN}/api/museums/${museum.id}/image`;
   return {
     title: `${museum.title} | One Minute Museum`,
     description: museum.subtitle,
     robots: { index: false, follow: false },
-    openGraph: { title: museum.title, description: museum.subtitle, images: image ? [{ url: image }] : [] },
+    alternates: { canonical: pageUrl },
+    openGraph: {
+      title: `${museum.title} | One Minute Museum`,
+      description: museum.subtitle,
+      url: pageUrl,
+      siteName: 'One Minute Museum',
+      type: 'website',
+      images: [{ url: image, alt: `The miniature museum of ${museum.title}` }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${museum.title} | One Minute Museum`,
+      description: museum.subtitle,
+      images: [image],
+    },
   };
 }
 

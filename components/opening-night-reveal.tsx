@@ -15,7 +15,7 @@ export function OpeningNightReveal({ architecture, children, onComplete }: { arc
 
   return (
     <div className="opening-night">
-      <div className="opening-night-scene">{children}</div>
+      <div className="opening-night-scene" inert aria-hidden="true">{children}</div>
       <div className="reveal-house" aria-live="polite">
         <div className="reveal-panel reveal-panel-left"><span /></div>
         <div className="reveal-panel reveal-panel-right"><span /></div>

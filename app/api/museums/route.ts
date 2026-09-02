@@ -1,12 +1,25 @@
 import { env } from 'cloudflare:workers';
+import { getArchitecture } from '@/lib/architectures';
 import { fallbackMuseum } from '@/lib/museum';
+import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
 type Bindings = { DB: D1Database; FILES: R2Bucket; OPENAI_API_KEY?: string };
 
-const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
+const allowedOrigins = new Set([PUBLIC_SITE_ORIGIN, 'https://one-minute-museum.dharshanlab.chatgpt.site']);
+const maxCreatesPerMinute = 12;
+const maxCreatesPerHour = 100;
 
-function json(data: unknown, init?: ResponseInit) {
-  return Response.json(data, { ...init, headers: corsHeaders });
+function corsHeaders(request: Request) {
+  const headers = new Headers({ Vary: 'Origin' });
+  const origin = request.headers.get('Origin');
+  if (origin && allowedOrigins.has(origin)) headers.set('Access-Control-Allow-Origin', origin);
+  return headers;
+}
+
+function json(request: Request, data: unknown, init?: ResponseInit) {
+  const headers = new Headers(init?.headers);
+  corsHeaders(request).forEach((value, key) => headers.set(key, value));
+  return Response.json(data, { ...init, headers });
 }
 
 const createTableSql = `CREATE TABLE IF NOT EXISTS museums (
@@ -32,14 +45,24 @@ function bytesToBase64(bytes: Uint8Array) {
 }
 
 async function startBackgroundResponse(apiKey: string, payload: Record<string, unknown>) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
+  const response = await fetchWithDeadline('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, background: true, store: true }),
-  });
+  }, 35_000);
   const result = await response.json() as { id?: string; error?: { message?: string } };
   if (!response.ok || !result.id) throw new Error(result.error?.message || `OpenAI request failed (${response.status})`);
   return result.id;
+}
+
+async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit, timeout: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('OpenAI request timed out'), timeout);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function renderPrompt(lens: string) {
@@ -73,12 +96,12 @@ export async function POST(request: Request) {
   const photo = form.get('photo');
   const rawTitle = form.get('title');
   const rawLens = form.get('lens');
-  const title = (typeof rawTitle === 'string' ? rawTitle : 'Untitled moment').slice(0, 80);
-  const lens = (typeof rawLens === 'string' ? rawLens : 'art-deco').slice(0, 24);
+  const title = (typeof rawTitle === 'string' ? rawTitle.trim() : '').slice(0, 80) || 'Untitled moment';
+  const lens = getArchitecture(typeof rawLens === 'string' ? rawLens : 'art-deco').id;
   if (!(photo instanceof File) || !photo.type.startsWith('image/') || photo.size > 900 * 1024) {
-    return json({ error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
+    return json(request, { error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
   }
-  if (!bindings.OPENAI_API_KEY) return json({ error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
+  if (!bindings.OPENAI_API_KEY) return json(request, { error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
 
   const id = crypto.randomUUID();
   const sourceBytes = new Uint8Array(await photo.arrayBuffer());
@@ -86,27 +109,51 @@ export async function POST(request: Request) {
   const sourceKey = `museums/${id}/source.webp`;
   const renderKey = `museums/${id}/render.jpg`;
   const fallback = fallbackMuseum(title, lens);
+  let rowCreated = false;
 
   try {
-    await bindings.FILES.put(sourceKey, sourceBytes, { httpMetadata: { contentType: photo.type } });
     await bindings.DB.prepare(createTableSql).run();
+    const now = Date.now();
+    const usage = await bindings.DB.prepare(`SELECT
+      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS minute_count,
+      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS hour_count
+      FROM museums WHERE status != 'failed'`)
+      .bind(now - 60_000, now - 60 * 60_000)
+      .first<{ minute_count: number | null; hour_count: number | null }>();
+    if ((usage?.minute_count ?? 0) >= maxCreatesPerMinute || (usage?.hour_count ?? 0) >= maxCreatesPerHour) {
+      return json(request, { error: 'The museum studio is at capacity right now. Tour the example and try your photograph again shortly.' }, { status: 429 });
+    }
+
+    await bindings.FILES.put(sourceKey, sourceBytes, { httpMetadata: { contentType: photo.type } });
+    await bindings.DB.prepare(`INSERT INTO museums (id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, phase_updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'render_starting', NULL, NULL, NULL, ?, ?)`).bind(
+      id, title, fallback.subtitle, lens, sourceKey, renderKey, JSON.stringify(fallback.exhibits), now, now,
+    ).run();
+    rowCreated = true;
+
     const renderResponseId = await startBackgroundResponse(bindings.OPENAI_API_KEY, {
       model: 'gpt-5.6-luna',
       input: [{ role: 'user', content: [{ type: 'input_text', text: renderPrompt(lens) }, { type: 'input_image', image_url: dataUrl, detail: 'high' }] }],
       tools: [{ type: 'image_generation', action: 'edit', quality: 'high', size: '1536x1024', output_format: 'jpeg', output_compression: 82 }],
     });
-
-    const now = Date.now();
-    await bindings.DB.prepare(`INSERT INTO museums (id, title, subtitle, lens, source_key, render_key, exhibits_json, status, render_response_id, curation_response_id, error, phase_updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'rendering', ?, NULL, NULL, ?, ?)`).bind(
-      id, title, fallback.subtitle, lens, sourceKey, renderKey, JSON.stringify(fallback.exhibits), renderResponseId, now, now,
+    const started = await bindings.DB.prepare("UPDATE museums SET status = 'rendering', render_response_id = ?, phase_updated_at = ? WHERE id = ? AND status = 'render_starting' AND render_response_id IS NULL").bind(
+      renderResponseId, Date.now(), id,
     ).run();
-    return json({ id, status: 'processing', message: 'The gallery architects are drawing the first elevation.' }, { status: 202 });
+    if ((started.meta.changes ?? 0) !== 1) throw new Error('The museum job could not save its render reference.');
+    return json(request, { id, status: 'processing', message: 'The gallery architects are drawing the first elevation.' }, { status: 202 });
   } catch (error) {
     console.error('Museum render start failed', error);
-    return json({ error: 'The museum could not start rendering. Check the API key and try again.' }, { status: 502 });
+    if (rowCreated) {
+      await bindings.DB.prepare("UPDATE museums SET status = 'failed', error = ?, phase_updated_at = ? WHERE id = ? AND status = 'render_starting'")
+        .bind(error instanceof Error ? error.message.slice(0, 500) : 'Render start failed', Date.now(), id)
+        .run()
+        .catch(() => undefined);
+    }
+    return json(request, { error: 'The museum could not start rendering. Check the connection and try again.' }, { status: 502 });
   }
 }
 
-export function OPTIONS() {
-  return new Response(null, { status: 204, headers: { ...corsHeaders, 'Access-Control-Allow-Methods': 'POST, OPTIONS' } });
+export function OPTIONS(request: Request) {
+  const headers = corsHeaders(request);
+  headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  return new Response(null, { status: 204, headers });
 }

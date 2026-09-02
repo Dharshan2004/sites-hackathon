@@ -1,19 +1,20 @@
 'use client';
 
 import Image from 'next/image';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 
 type Focus = { x: number; y: number };
+type DioramaMode = 'living' | 'still';
 
-export function LivingDiorama({ src, alt, focus }: { src: string; alt: string; focus: Focus }) {
+export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; alt: string; focus: Focus; onModeChange?: (mode: DioramaMode) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const focusRef = useRef(focus);
-  const [useStatic, setUseStatic] = useState(true);
 
   useEffect(() => { focusRef.current = focus; }, [focus]);
 
   useEffect(() => {
     const host = hostRef.current;
+    onModeChange?.('still');
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const compact = window.matchMedia('(max-width: 719px)').matches;
     const lowPower = navigator.hardwareConcurrency !== undefined && navigator.hardwareConcurrency <= 4;
@@ -26,30 +27,33 @@ export function LivingDiorama({ src, alt, focus }: { src: string; alt: string; f
     void import('three').then((THREE) => {
       if (disposed || !hostRef.current) return;
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color('#0d0d0a');
       const camera = new THREE.PerspectiveCamera(32, host.clientWidth / host.clientHeight, 0.1, 100);
       camera.position.set(0, 0, 5.4);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
       renderer.setSize(host.clientWidth, host.clientHeight);
+      renderer.setClearColor('#0d0d0a', 0);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
       renderer.domElement.className = 'diorama-canvas';
+      renderer.domElement.setAttribute('aria-hidden', 'true');
       host.appendChild(renderer.domElement);
 
       scene.add(new THREE.AmbientLight('#f6d7b0', 1.8));
       const spot = new THREE.SpotLight('#ffad73', 10, 16, Math.PI / 5, 0.8, 1.3);
       spot.position.set(-2.6, 3.4, 5); scene.add(spot);
 
+      let textureReady = false;
+      let firstFrameReady = false;
       const texture = new THREE.TextureLoader().load(src, (loaded) => {
         loaded.colorSpace = THREE.SRGBColorSpace;
         const ratio = loaded.image.width / loaded.image.height;
         const width = ratio >= 1 ? 4.8 : 4.8 * ratio;
         const height = ratio >= 1 ? 4.8 / ratio : 4.8;
         artwork.scale.set(width, height, 1);
-        setUseStatic(false);
-      });
+        textureReady = true;
+      }, undefined, () => onModeChange?.('still'));
       texture.colorSpace = THREE.SRGBColorSpace;
       const artwork = new THREE.Mesh(
         new THREE.PlaneGeometry(1, 1, 24, 24),
@@ -83,7 +87,14 @@ export function LivingDiorama({ src, alt, focus }: { src: string; alt: string; f
       host.addEventListener('pointermove', onPointer); host.addEventListener('pointerleave', onLeave); window.addEventListener('resize', onResize);
 
       const startedAt = performance.now();
+      let intersectsViewport = true;
+      let animationRunning = false;
       const animate = () => {
+        if (disposed || document.hidden || !intersectsViewport) {
+          animationRunning = false;
+          frame = 0;
+          return;
+        }
         const elapsed = (performance.now() - startedAt) / 1000;
         const active = focusRef.current;
         const focusX = (active.x / 100 - 0.5) * 0.24;
@@ -93,22 +104,56 @@ export function LivingDiorama({ src, alt, focus }: { src: string; alt: string; f
         camera.lookAt(focusX * 0.28, focusY * 0.28, 0);
         artwork.rotation.y = pointer.x * 0.012; artwork.rotation.x = pointer.y * 0.008;
         particles.rotation.z = elapsed * 0.006; particles.position.y = Math.sin(elapsed * 0.35) * 0.025;
-        renderer.render(scene, camera); frame = requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+        if (textureReady && !firstFrameReady) {
+          firstFrameReady = true;
+          renderer.domElement.classList.add('is-ready');
+          onModeChange?.('living');
+        }
+        frame = requestAnimationFrame(animate);
       };
-      animate();
+      const startAnimation = () => {
+        if (animationRunning || disposed || document.hidden || !intersectsViewport) return;
+        animationRunning = true;
+        frame = requestAnimationFrame(animate);
+      };
+      const stopAnimation = () => {
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        animationRunning = false;
+      };
+      const onVisibility = () => document.hidden ? stopAnimation() : startAnimation();
+      const onContextLost = (event: Event) => {
+        event.preventDefault();
+        stopAnimation();
+        renderer.domElement.classList.remove('is-ready');
+        onModeChange?.('still');
+      };
+      const observer = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(([entry]) => {
+        intersectsViewport = entry?.isIntersecting ?? true;
+        if (intersectsViewport) startAnimation(); else stopAnimation();
+      }, { threshold: 0.05 });
+      observer?.observe(host);
+      document.addEventListener('visibilitychange', onVisibility);
+      renderer.domElement.addEventListener('webglcontextlost', onContextLost);
+      startAnimation();
 
       cleanup = () => {
-        cancelAnimationFrame(frame); host.removeEventListener('pointermove', onPointer); host.removeEventListener('pointerleave', onLeave); window.removeEventListener('resize', onResize);
+        stopAnimation();
+        observer?.disconnect();
+        document.removeEventListener('visibilitychange', onVisibility);
+        renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
+        host.removeEventListener('pointermove', onPointer); host.removeEventListener('pointerleave', onLeave); window.removeEventListener('resize', onResize);
         texture.dispose(); artwork.geometry.dispose(); artwork.material.dispose(); dustGeometry.dispose(); (particles.material as InstanceType<typeof THREE.PointsMaterial>).dispose(); renderer.dispose(); renderer.domElement.remove();
       };
     });
 
     return () => { disposed = true; cleanup(); };
-  }, [src]);
+  }, [onModeChange, src]);
 
   return (
-    <div ref={hostRef} className="living-diorama" aria-label={alt}>
-      <Image className={useStatic ? 'static-render' : 'static-render hidden'} src={src} alt={alt} fill sizes="(max-width: 860px) 100vw, 73vw" unoptimized />
+    <div ref={hostRef} className="living-diorama">
+      <Image className="static-render" src={src} alt={alt} fill sizes="(max-width: 860px) 100vw, 73vw" unoptimized />
     </div>
   );
 }

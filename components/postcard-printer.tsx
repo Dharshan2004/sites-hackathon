@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; previewUrl: string; onClose: () => void }) {
   const [printed, setPrinted] = useState(false);
   const [shared, setShared] = useState(false);
-  const didPrint = useRef(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
   const canShareFile = typeof navigator !== 'undefined'
     && typeof navigator.canShare === 'function'
     && navigator.canShare({ files: [file] });
@@ -21,15 +21,23 @@ export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; pre
   }, [file.name, previewUrl]);
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (dialog && !dialog.open) dialog.showModal();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const timer = window.setTimeout(() => {
-      if (didPrint.current) return;
-      didPrint.current = true;
-      download();
       setPrinted(true);
     }, reducedMotion ? 80 : 2050);
-    return () => window.clearTimeout(timer);
-  }, [download]);
+    return () => {
+      window.clearTimeout(timer);
+      document.body.style.overflow = previousOverflow;
+      if (dialog?.open) dialog.close();
+      returnFocus?.focus({ preventScroll: true });
+    };
+  }, []);
 
   async function shareImage() {
     if (!canShareFile) { download(); return; }
@@ -42,14 +50,14 @@ export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; pre
   }
 
   return (
-    <dialog className="printer-overlay" open aria-modal="true" aria-labelledby="printer-title" onCancel={(event) => { event.preventDefault(); onClose(); }}>
+    <dialog ref={dialogRef} className="printer-overlay" aria-labelledby="printer-title" onCancel={(event) => { event.preventDefault(); onClose(); }}>
       <button type="button" className="printer-backdrop" onClick={onClose} aria-label="Close postcard printer" />
       <section className={printed ? 'postcard-printer is-printed' : 'postcard-printer'}>
         <button type="button" className="printer-close" onClick={onClose} aria-label="Close" autoFocus><X size={18} /></button>
         <div className="printer-copy">
           <span>Exhibition press</span>
           <h2 id="printer-title">{printed ? 'Your card is ready.' : 'Printing your museum card.'}</h2>
-          <p>{printed ? 'The full museum is saved at 1080 × 1920, ready for Stories.' : 'Ink, paper and one tiny opening-night souvenir.'}</p>
+          <p>{printed ? 'Your 1080 × 1920 card is ready to download or share.' : 'Ink, paper and one tiny opening-night souvenir.'}</p>
         </div>
         <div className="printer-machine" aria-hidden="true">
           <div className="printer-light" />
@@ -58,7 +66,7 @@ export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; pre
           <div className="printer-footer"><span>ONE MINUTE MUSEUM</span><i /></div>
         </div>
         <div className="printer-actions">
-          <Button type="button" variant="ghost" onClick={download} disabled={!printed}><Download /> Download again</Button>
+          <Button type="button" variant="ghost" onClick={download} disabled={!printed}><Download /> Download card</Button>
           <Button type="button" onClick={shareImage} disabled={!printed}>{shared ? <Check /> : <Share2 />}{shared ? 'Shared' : canShareFile ? 'Share image' : 'Save image'}</Button>
         </div>
       </section>
