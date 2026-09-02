@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
-import { Aperture, ArrowLeft, ArrowRight, Check, ChevronDown, Cpu, LoaderCircle, MousePointer2, Printer, Share2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Aperture, ArrowLeft, ArrowRight, Check, ChevronDown, Cpu, Download, Eye, ImageIcon, LoaderCircle, MousePointer2, Printer, Share2, Square, Sparkles, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { LivingDiorama } from '@/components/living-diorama';
 import { PostcardPrinter } from '@/components/postcard-printer';
@@ -11,10 +11,14 @@ import { getArchitecture } from '@/lib/architectures';
 import type { MuseumRecord } from '@/lib/museum';
 import { PUBLIC_SITE_ORIGIN } from '@/lib/site-url';
 
-type Postcard = { file: File; previewUrl: string };
+type Postcard = { file: File; previewUrl: string; exhibitTitle: string };
+type ViewMode = 'museum' | 'source';
 
 export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; onReset?: () => void }) {
   const [activeExhibit, setActiveExhibit] = useState(0);
+  const [visited, setVisited] = useState<number[]>([0]);
+  const [viewMode, setViewMode] = useState<ViewMode>('museum');
+  const [isTouring, setIsTouring] = useState(false);
   const [shared, setShared] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [postcard, setPostcard] = useState<Postcard | null>(null);
@@ -22,7 +26,8 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
   const [shareError, setShareError] = useState('');
   const [dioramaMode, setDioramaMode] = useState<'living' | 'still'>('still');
   const labelRef = useRef<HTMLElement>(null);
-  const exhibit = result.exhibits[activeExhibit];
+  const tourRun = useRef(0);
+  const exhibit = result.exhibits[activeExhibit] ?? result.exhibits[0];
   const architecture = getArchitecture(result.lens);
   const hasMappedExhibits = result.mapped !== false;
 
@@ -31,13 +36,22 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
   }, []);
 
   useEffect(() => () => {
+    tourRun.current += 1;
+    window.speechSynthesis?.cancel();
+  }, []);
+
+  useEffect(() => () => {
     if (postcard) URL.revokeObjectURL(postcard.previewUrl);
   }, [postcard]);
 
+  function selectExhibit(index: number) {
+    setActiveExhibit(index);
+    setVisited((current) => current.includes(index) ? current : [...current, index]);
+  }
+
   async function shareMuseum() {
     setShareError('');
-    const origin = window.location.hostname.endsWith('.chatgpt.site') ? PUBLIC_SITE_ORIGIN : window.location.origin;
-    const url = `${origin}/museum/${result.id}`;
+    const url = museumUrl(result.id);
     if (navigator.share) {
       try {
         await navigator.share({ title: result.title, text: 'Visit my One Minute Museum', url });
@@ -61,7 +75,7 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
     setCardError('');
     try {
       const file = await buildPostcard(result, activeExhibit);
-      setPostcard({ file, previewUrl: URL.createObjectURL(file) });
+      setPostcard({ file, previewUrl: URL.createObjectURL(file), exhibitTitle: exhibit.title });
     } catch {
       setCardError('The exhibition press could not print this image. Please try again.');
     } finally {
@@ -73,17 +87,40 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
     setPostcard(null);
   }
 
-  function selectFromKeyboard(event: KeyboardEvent<HTMLButtonElement>) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const direction = event.key === 'ArrowRight' ? 1 : -1;
-    setActiveExhibit((current) => (current + direction + result.exhibits.length) % result.exhibits.length);
-  }
-
   function showFullLabel() {
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     labelRef.current?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'start' });
   }
+
+  function stopTour() {
+    tourRun.current += 1;
+    window.speechSynthesis?.cancel();
+    setIsTouring(false);
+  }
+
+  async function startTour() {
+    if (isTouring) {
+      stopTour();
+      return;
+    }
+
+    const run = tourRun.current + 1;
+    tourRun.current = run;
+    setIsTouring(true);
+    setViewMode('museum');
+    for (let index = 0; index < result.exhibits.length; index += 1) {
+      if (tourRun.current !== run) return;
+      selectExhibit(index);
+      const item = result.exhibits[index];
+      const introduction = index === 0 ? `Welcome to ${result.title}. ${result.subtitle} ` : '';
+      await narrate(`${introduction}Exhibit ${index + 1}. ${item.title}. ${item.label}`);
+      if (tourRun.current !== run) return;
+      await pause(450);
+    }
+    if (tourRun.current === run) setIsTouring(false);
+  }
+
+  const progressLabel = visited.length === result.exhibits.length ? 'Catalogue complete' : `${visited.length} of ${result.exhibits.length} seen`;
 
   return (
     <main className="exhibition-view">
@@ -101,49 +138,84 @@ export function MuseumExhibition({ result, onReset }: { result: MuseumRecord; on
         <div className="room-header"><span>Unlisted collection</span><span>{architecture.label} / {architecture.world}</span></div>
         <div className="diorama-stage">
           <div className="artwork-field">
-            <LivingDiorama src={result.imageUrl} alt={`The miniature museum of ${result.title}`} focus={hasMappedExhibits ? { x: exhibit.x, y: exhibit.y } : { x: 50, y: 50 }} onModeChange={setDioramaMode} />
+            {viewMode === 'museum'
+              ? <LivingDiorama src={result.imageUrl} alt={result.altText} focus={hasMappedExhibits ? { x: exhibit.x, y: exhibit.y } : { x: 50, y: 50 }} onModeChange={setDioramaMode} />
+              : result.sourceUrl && <Image className="source-original" src={result.sourceUrl} alt={`Original photograph used to create ${result.title}`} fill sizes="(max-width: 860px) 100vw, 73vw" unoptimized />}
             <div className="stage-vignette" />
-            {hasMappedExhibits && result.exhibits.map((item, index) => (
-              <button
-                key={item.number}
-                className={activeExhibit === index ? 'hotspot active' : 'hotspot'}
-                style={{ left: `${item.x}%`, top: `${item.y}%` }}
-                onClick={() => setActiveExhibit(index)}
-                onKeyDown={selectFromKeyboard}
-                aria-label={`Open exhibit ${item.number}: ${item.title}`}
-                aria-pressed={activeExhibit === index}
-              ><span>{item.number}</span></button>
-            ))}
-            <div className="diorama-hint"><MousePointer2 size={13} /><span>{hasMappedExhibits ? (dioramaMode === 'living' ? 'Move to look. Choose a marker.' : 'Choose a marker to explore.') : 'The room is ready. Read the labels below.'}</span></div>
+            {result.sourceUrl && (
+              <fieldset className="compare-switch">
+                <legend className="sr-only">Compare the original photograph and generated museum</legend>
+                <button type="button" className={viewMode === 'source' ? 'active' : ''} onClick={() => setViewMode('source')} aria-pressed={viewMode === 'source'}><Eye size={13} /> Original</button>
+                <button type="button" className={viewMode === 'museum' ? 'active' : ''} onClick={() => setViewMode('museum')} aria-pressed={viewMode === 'museum'}><ImageIcon size={13} /> Museum</button>
+              </fieldset>
+            )}
+            {viewMode === 'museum' && hasMappedExhibits && (
+              <fieldset className="hotspot-layer">
+                <legend className="sr-only">Visually mapped museum exhibits</legend>
+                {result.exhibits.map((item, index) => (
+                  <span key={item.number}>
+                    <input
+                      id={`exhibit-${result.id}-${index}`}
+                      className="hotspot-input sr-only"
+                      type="radio"
+                      name={`museum-exhibits-${result.id}`}
+                      checked={activeExhibit === index}
+                      onChange={() => selectExhibit(index)}
+                    />
+                    <label
+                      className={activeExhibit === index ? 'hotspot active' : 'hotspot'}
+                      style={{ left: `${item.x}%`, top: `${item.y}%` }}
+                      htmlFor={`exhibit-${result.id}-${index}`}
+                    ><span>{item.number}</span><span className="sr-only">{item.title}</span></label>
+                  </span>
+                ))}
+              </fieldset>
+            )}
+            <div className="diorama-hint"><MousePointer2 size={13} /><span>{viewMode === 'source' ? 'The original stays on this device.' : hasMappedExhibits ? (dioramaMode === 'living' ? 'Move to look. Choose a marker.' : 'Choose a marker to explore.') : 'The room is ready. Read the labels below.'}</span></div>
           </div>
-          <button type="button" className="mobile-exhibit-caption" onClick={showFullLabel} aria-label={`Read the full label for ${exhibit.title}`}>
-            <span>Exhibit {exhibit.number}</span>
-            <strong>{exhibit.title}</strong>
-            <small>{exhibit.label}</small>
-          </button>
+          {viewMode === 'museum' && (
+            <button type="button" className="mobile-exhibit-caption" onClick={showFullLabel} aria-label={`Read the full label for ${exhibit.title}`}>
+              <span>Exhibit {exhibit.number}</span>
+              <strong>{exhibit.title}</strong>
+              <small>{exhibit.label}</small>
+            </button>
+          )}
         </div>
         <aside ref={labelRef} className="museum-label">
-          <div className="label-number">EXHIBIT {exhibit.number} / 03</div>
+          <div className="museum-proof" aria-label="How this museum was built">
+            <span><Sparkles size={12} /> OpenAI room</span>
+            <span>{hasMappedExhibits ? '3 vision mapped details' : '3 curated labels'}</span>
+            <span>{dioramaMode === 'living' ? 'Image relief active' : 'Adaptive still'}</span>
+          </div>
+          <div className="visitor-catalogue">
+            <div><small>Visitor catalogue</small><strong>{progressLabel}</strong></div>
+            <button type="button" onClick={startTour}>{isTouring ? <Square size={12} fill="currentColor" /> : <Volume2 size={14} />}{isTouring ? 'Stop tour' : 'Guided tour'}</button>
+          </div>
           <h1>{result.title}</h1>
           <p className="museum-subtitle">{result.subtitle}</p>
           <div className="label-rule" />
-          <h2>{exhibit.title}</h2>
-          <p>{exhibit.label}</p>
+          <div className="exhibit-live" aria-live="polite" aria-atomic="true">
+            <div className="label-number">EXHIBIT {exhibit.number} / 03</div>
+            <h2>{exhibit.title}</h2>
+            <p>{exhibit.label}</p>
+          </div>
+          <span className="sr-only" aria-live="polite">{isTouring ? `Guided tour playing exhibit ${exhibit.number}` : visited.length === result.exhibits.length ? 'All three exhibits visited.' : ''}</span>
           {cardError && <p className="card-error" role="alert">{cardError}</p>}
           {shareError && <p className="card-error" role="alert">{shareError}</p>}
-          <div className="exhibit-pagination">
-            {result.exhibits.map((item, index) => <button key={item.number} onClick={() => setActiveExhibit(index)} className={index === activeExhibit ? 'active' : ''} aria-label={`Show exhibit ${item.number}`} aria-pressed={index === activeExhibit}>{item.number}</button>)}
+          <div className="exhibit-pagination" aria-label="Exhibit catalogue">
+            {result.exhibits.map((item, index) => <button key={item.number} onClick={() => selectExhibit(index)} className={index === activeExhibit ? 'active' : ''} aria-label={`Show exhibit ${item.number}`} aria-pressed={index === activeExhibit}>{item.number}</button>)}
           </div>
           <details className="behind-exhibit">
-            <summary><span><Cpu size={15} /> Behind the exhibit</span><small>{dioramaMode === 'living' ? 'Living 2.5D' : 'Performance still'}</small><ChevronDown size={14} /></summary>
-            <p>{hasMappedExhibits ? 'OpenAI generates the room from your photograph, reads the finished render to place three exhibits, then hands it to an adaptive Three.js stage.' : 'OpenAI generated this room from your photograph. The visual curator could not safely map markers, so the room opens with its interpretive labels instead.'}</p>
+            <summary><span><Cpu size={15} /> Behind the exhibit</span><small>{dioramaMode === 'living' ? 'WebGL image relief' : 'Performance still'}</small><ChevronDown size={14} /></summary>
+            <p>{hasMappedExhibits ? 'OpenAI builds the room from your photograph, reads the finished render to map three visible exhibits, then hands it to an adaptive Three.js presentation. The uploaded source is removed from storage after the render handoff.' : 'OpenAI built this room from your photograph. The visual curator could not safely map markers, so the room opens with its interpretive labels instead. The uploaded source is removed after render handoff.'}</p>
             <div className="tech-pipeline" aria-label="Museum generation pipeline">
-              <span>Photo</span><ArrowRight aria-hidden="true" /><span>Generated room</span><ArrowRight aria-hidden="true" /><span>{hasMappedExhibits ? 'Mapped exhibits' : 'Safe labels'}</span><ArrowRight aria-hidden="true" /><span>Living view</span>
+              <span>Photo</span><ArrowRight aria-hidden="true" /><span>Generated room</span><ArrowRight aria-hidden="true" /><span>{hasMappedExhibits ? 'Vision mapping' : 'Safe labels'}</span><ArrowRight aria-hidden="true" /><span>WebGL view</span>
             </div>
+            <a className="save-render" href={result.imageUrl} download={`${slugify(result.title)}-museum.jpg`}><Download size={13} /> Save full museum render</a>
           </details>
         </aside>
       </section>
-      {postcard && <PostcardPrinter file={postcard.file} previewUrl={postcard.previewUrl} onClose={closePrinter} />}
+      {postcard && <PostcardPrinter file={postcard.file} previewUrl={postcard.previewUrl} exhibitTitle={postcard.exhibitTitle} onClose={closePrinter} />}
     </main>
   );
 }
@@ -153,13 +225,51 @@ async function copyText(text: string) {
   await navigator.clipboard.writeText(text);
 }
 
+function museumUrl(id: string) {
+  const origin = window.location.hostname.endsWith('.chatgpt.site') ? PUBLIC_SITE_ORIGIN : window.location.origin;
+  return `${origin}/museum/${id}`;
+}
+
+async function narrate(text: string) {
+  if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+    await pause(4600);
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.94;
+    utterance.pitch = 0.96;
+    const timeout = window.setTimeout(resolve, 14_000);
+    utterance.onend = () => { window.clearTimeout(timeout); resolve(); };
+    utterance.onerror = () => { window.clearTimeout(timeout); resolve(); };
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+function pause(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function loadCanvasImage(src: string) {
+  const image = new window.Image();
+  image.crossOrigin = 'anonymous';
+  image.src = src;
+  await image.decode();
+  return image;
+}
+
 async function buildPostcard(result: MuseumRecord, exhibitIndex: number): Promise<File> {
   const architecture = getArchitecture(result.lens);
   const exhibit = result.exhibits[exhibitIndex] ?? result.exhibits[0];
-  const image = new Image();
-  image.crossOrigin = 'anonymous';
-  image.src = result.imageUrl;
-  await image.decode();
+  const [image, qrModule] = await Promise.all([loadCanvasImage(result.imageUrl), import('qrcode')]);
+  const qrDataUrl = await qrModule.toDataURL(museumUrl(result.id), {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 180,
+    color: { dark: '#171713', light: '#f2efe7' },
+  });
+  const qrImage = await loadCanvasImage(qrDataUrl);
 
   const canvas = document.createElement('canvas');
   canvas.width = 1080;
@@ -193,19 +303,19 @@ async function buildPostcard(result: MuseumRecord, exhibitIndex: number): Promis
   context.fillStyle = '#8f897e';
   context.font = '700 20px Arial';
   context.letterSpacing = '3px';
-  context.fillText('ARCHITECTURAL WORLD', 72, 1015);
+  context.fillText('ARCHITECTURAL WORLD', 72, 1005);
   context.fillStyle = '#ea6549';
   context.font = '700 29px Arial';
   context.letterSpacing = '1px';
-  context.fillText(`${architecture.label.toUpperCase()} / ${architecture.world.toUpperCase()}`, 72, 1064);
+  context.fillText(`${architecture.label.toUpperCase()} / ${architecture.world.toUpperCase()}`, 72, 1052);
   context.letterSpacing = '0px';
 
-  const titleSize = result.title.length > 48 ? 61 : result.title.length > 28 ? 74 : 90;
+  const titleSize = result.title.length > 48 ? 58 : result.title.length > 28 ? 70 : 84;
   context.fillStyle = '#f2efe7';
   context.font = `italic ${titleSize}px Georgia`;
-  const afterTitle = drawWrappedText(context, result.title, 72, 1174, 936, titleSize * 1.03, 2);
+  const afterTitle = drawWrappedText(context, result.title, 72, 1156, 936, titleSize * 1.03, 2);
 
-  const quoteTop = Math.max(1405, afterTitle + 40);
+  const quoteTop = Math.max(1370, afterTitle + 34);
   context.fillStyle = '#ea6549';
   context.fillRect(72, quoteTop - 31, 40, 4);
   context.fillStyle = '#8f897e';
@@ -214,26 +324,30 @@ async function buildPostcard(result: MuseumRecord, exhibitIndex: number): Promis
   context.fillText(`EXHIBIT ${exhibit.number} / ${exhibit.title.toUpperCase()}`, 72, quoteTop + 15);
   context.letterSpacing = '0px';
   context.fillStyle = '#c7c0b3';
-  context.font = '36px Georgia';
-  drawWrappedText(context, `“${exhibit.label}”`, 72, quoteTop + 76, 900, 48, 5);
+  context.font = '32px Georgia';
+  drawWrappedText(context, `“${exhibit.label}”`, 72, quoteTop + 70, 900, 42, 4);
 
   context.strokeStyle = '#3e3a33';
   context.beginPath();
-  context.moveTo(72, 1811);
-  context.lineTo(1008, 1811);
+  context.moveTo(72, 1714);
+  context.lineTo(1008, 1714);
   context.stroke();
   context.fillStyle = '#777269';
-  context.font = '18px Arial';
+  context.font = '17px Arial';
   context.letterSpacing = '2px';
-  context.fillText(`PRIVATE COLLECTION / ${result.id.slice(0, 8).toUpperCase()}`, 72, 1861);
-  context.textAlign = 'right';
-  context.fillText('1080 × 1920', 1008, 1861);
-  context.textAlign = 'left';
+  context.fillText(`UNLISTED COLLECTION / ${result.id.slice(0, 8).toUpperCase()}`, 72, 1770);
+  context.fillText('SCAN TO ENTER THE INTERACTIVE ROOM', 72, 1810);
+  context.fillStyle = '#f2efe7';
+  context.fillRect(852, 1740, 156, 156);
+  context.drawImage(qrImage, 858, 1746, 144, 144);
   context.letterSpacing = '0px';
 
   const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error('The postcard could not be encoded.')), 'image/png'));
-  const filename = `${result.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'museum'}-story.png`;
-  return new File([blob], filename, { type: 'image/png' });
+  return new File([blob], `${slugify(result.title)}-story.png`, { type: 'image/png' });
+}
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'museum';
 }
 
 function drawWrappedText(context: CanvasRenderingContext2D, text: string, x: number, y: number, width: number, lineHeight: number, maxLines: number) {

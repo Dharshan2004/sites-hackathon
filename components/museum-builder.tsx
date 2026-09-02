@@ -16,6 +16,7 @@ type BuilderStatus = 'idle' | 'curating' | 'revealing' | 'ready';
 type ActiveMuseumJob = { id: string; title: string; architecture: ArchitectureId; startedAt: number };
 
 const activeJobKey = 'one-minute-museum.active-job';
+const visitorKey = 'one-minute-museum.visitor';
 
 export function MuseumBuilder() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -165,12 +166,16 @@ export function MuseumBuilder() {
     setProgress('Optimizing your photograph on this device.');
     try {
       const upload = await prepareImageUpload(file);
+      const requestId = crypto.randomUUID();
+      writeActiveJob({ id: requestId, title: title.trim(), architecture, startedAt: jobStartedAt });
       setProgressPhase('rendering');
       setProgress('Sending the miniature plans to the gallery architects.');
       const form = new FormData();
       form.append('photo', upload);
       form.append('title', title.trim());
       form.append('lens', architecture);
+      form.append('requestId', requestId);
+      form.append('visitorId', readVisitorId());
       const response = await fetchWithDeadline(siteUrl('/api/museums'), { method: 'POST', body: form }, 45_000);
       const body = await response.text();
       let payload: MuseumRecord & { error?: string; status?: string; message?: string };
@@ -192,6 +197,7 @@ export function MuseumBuilder() {
         setProgressPhase(phase);
       });
       museum.imageUrl = siteUrl(museum.imageUrl);
+      museum.sourceUrl = imageUrl ?? undefined;
       clearActiveJob();
       window.scrollTo({ top: 0, behavior: 'auto' });
       setResult(museum);
@@ -214,7 +220,7 @@ export function MuseumBuilder() {
     <main className="museum-shell min-h-[100dvh]">
       <nav className="museum-nav">
         <a className="brand" href="#top"><span className="brand-mark"><Aperture size={18} strokeWidth={1.7} /></span><span>One Minute Museum</span></a>
-        <div className="nav-edition">Private exhibition builder</div>
+        <div className="nav-edition">Unlisted exhibition builder</div>
       </nav>
       <section id="top" className="hero-grid">
         <div className="intro-copy">
@@ -263,10 +269,13 @@ export function MuseumBuilder() {
                         type="button"
                         key={item.id}
                         className={architecture === item.id ? 'lens active' : 'lens'}
+                        data-architecture={item.id}
                         onClick={() => chooseArchitecture(item.id)}
                         aria-pressed={architecture === item.id}
+                        aria-label={`${item.label}: ${item.world}`}
                       >
-                        <span>{item.label}</span><small>{item.world}</small>
+                        <span className="lens-motif" aria-hidden="true"><i /><i /><i /></span>
+                        <span className="lens-copy"><strong>{item.label}</strong><small>{item.world}</small></span>
                       </button>
                     ))}
                   </div>
@@ -283,7 +292,7 @@ export function MuseumBuilder() {
       </section>
       <section className="promise-strip" aria-label="What the museum includes">
         <div className="promise-lead"><span>BUILT WITH OPENAI VISION + IMAGE GENERATION</span><strong>One photograph becomes an explorable miniature exhibition.</strong></div>
-        <div className="promise-keepsake"><Ticket size={20} /><p>Private link<br />Interactive exhibits<br />Story-ready card</p></div>
+        <div className="promise-keepsake"><Ticket size={20} /><p>Unlisted link<br />Interactive exhibits<br />Story-ready card</p></div>
       </section>
     </main>
   );
@@ -411,4 +420,16 @@ function writeActiveJob(job: ActiveMuseumJob) {
 
 function clearActiveJob() {
   try { window.localStorage.removeItem(activeJobKey); } catch { /* Storage is optional. */ }
+}
+
+function readVisitorId() {
+  try {
+    const saved = window.localStorage.getItem(visitorKey);
+    if (saved) return saved;
+    const created = crypto.randomUUID();
+    window.localStorage.setItem(visitorKey, created);
+    return created;
+  } catch {
+    return crypto.randomUUID();
+  }
 }

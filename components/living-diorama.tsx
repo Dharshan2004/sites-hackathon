@@ -29,7 +29,7 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(32, host.clientWidth / host.clientHeight, 0.1, 100);
       camera.position.set(0, 0, 5.4);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
       renderer.setSize(host.clientWidth, host.clientHeight);
       renderer.setClearColor('#0d0d0a', 0);
@@ -42,7 +42,8 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
 
       scene.add(new THREE.AmbientLight('#f6d7b0', 1.8));
       const spot = new THREE.SpotLight('#ffad73', 10, 16, Math.PI / 5, 0.8, 1.3);
-      spot.position.set(-2.6, 3.4, 5); scene.add(spot);
+      spot.position.set(-2.6, 3.4, 5);
+      scene.add(spot, spot.target);
 
       let textureReady = false;
       let firstFrameReady = false;
@@ -56,8 +57,8 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
       }, undefined, () => onModeChange?.('still'));
       texture.colorSpace = THREE.SRGBColorSpace;
       const artwork = new THREE.Mesh(
-        new THREE.PlaneGeometry(1, 1, 24, 24),
-        new THREE.MeshStandardMaterial({ map: texture, roughness: 0.82, metalness: 0.02 }),
+        new THREE.PlaneGeometry(1, 1, 40, 40),
+        new THREE.MeshStandardMaterial({ map: texture, displacementMap: texture, displacementScale: 0.065, displacementBias: -0.028, roughness: 0.82, metalness: 0.02 }),
       );
       artwork.position.z = 0; scene.add(artwork);
 
@@ -97,12 +98,16 @@ export function LivingDiorama({ src, alt, focus, onModeChange }: { src: string; 
         }
         const elapsed = (performance.now() - startedAt) / 1000;
         const active = focusRef.current;
-        const focusX = (active.x / 100 - 0.5) * 0.24;
-        const focusY = (0.5 - active.y / 100) * 0.18;
-        camera.position.x += (pointer.x * 0.075 + focusX - camera.position.x) * 0.035;
-        camera.position.y += (-pointer.y * 0.055 + focusY - camera.position.y) * 0.035;
-        camera.lookAt(focusX * 0.28, focusY * 0.28, 0);
-        artwork.rotation.y = pointer.x * 0.012; artwork.rotation.x = pointer.y * 0.008;
+        const focusX = (active.x / 100 - 0.5) * 0.48;
+        const focusY = (0.5 - active.y / 100) * 0.36;
+        camera.position.x += (pointer.x * 0.1 + focusX - camera.position.x) * 0.045;
+        camera.position.y += (-pointer.y * 0.075 + focusY - camera.position.y) * 0.045;
+        camera.position.z += (5.22 - camera.position.z) * 0.035;
+        camera.lookAt(focusX * 0.45, focusY * 0.45, 0);
+        artwork.rotation.y += (pointer.x * 0.016 + focusX * 0.012 - artwork.rotation.y) * 0.05;
+        artwork.rotation.x += (pointer.y * 0.011 - focusY * 0.008 - artwork.rotation.x) * 0.05;
+        spot.target.position.x += ((active.x / 100 - 0.5) * artwork.scale.x * 0.75 - spot.target.position.x) * 0.055;
+        spot.target.position.y += ((0.5 - active.y / 100) * artwork.scale.y * 0.75 - spot.target.position.y) * 0.055;
         particles.rotation.z = elapsed * 0.006; particles.position.y = Math.sin(elapsed * 0.35) * 0.025;
         renderer.render(scene, camera);
         if (textureReady && !firstFrameReady) {

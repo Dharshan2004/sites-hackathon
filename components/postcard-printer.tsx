@@ -5,7 +5,7 @@ import { Check, Download, Share2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
-export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; previewUrl: string; onClose: () => void }) {
+export function PostcardPrinter({ file, previewUrl, exhibitTitle, onClose }: { file: File; previewUrl: string; exhibitTitle: string; onClose: () => void }) {
   const [printed, setPrinted] = useState(false);
   const [shared, setShared] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -57,7 +57,7 @@ export function PostcardPrinter({ file, previewUrl, onClose }: { file: File; pre
         <div className="printer-copy">
           <span>Exhibition press</span>
           <h2 id="printer-title">{printed ? 'Your card is ready.' : 'Printing your museum card.'}</h2>
-          <p>{printed ? 'Your 1080 × 1920 card is ready to download or share.' : 'Ink, paper and one tiny opening-night souvenir.'}</p>
+          <p>{printed ? `Your 1080 × 1920 card features “${exhibitTitle}” and includes a QR code back to the interactive room.` : 'Ink, paper and one tiny opening-night souvenir.'}</p>
         </div>
         <div className="printer-machine" aria-hidden="true">
           <div className="printer-light" />

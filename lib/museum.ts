@@ -10,9 +10,11 @@ export type MuseumRecord = {
   id: string;
   title: string;
   subtitle: string;
+  altText: string;
   lens: string;
   exhibits: MuseumExhibit[];
   imageUrl: string;
+  sourceUrl?: string;
   mapped?: boolean;
 };
 
@@ -20,6 +22,7 @@ export const exampleMuseum: MuseumRecord = {
   id: 'example-art-deco-bicycle',
   title: 'After the rain',
   subtitle: 'A red bicycle holds the street still while the city catches its reflection.',
+  altText: 'An isometric Art Deco museum displaying a rainy city scene with a red bicycle, geometric brass details and three illuminated exhibits.',
   lens: 'art-deco',
   imageUrl: '/examples/art-deco-museum.jpg',
   exhibits: [
@@ -98,6 +101,7 @@ export function fallbackMuseum(title: string, lens: string): Omit<MuseumRecord, 
   return {
     title,
     subtitle: copy.subtitle,
+    altText: `An isometric miniature ${lens.replaceAll('-', ' ')} museum generated from the uploaded photograph.`,
     lens,
     exhibits: copy.labels.map(([exhibitTitle, label], index) => ({
       number: String(index + 1).padStart(2, '0'),
