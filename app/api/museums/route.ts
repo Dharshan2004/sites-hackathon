@@ -78,13 +78,28 @@ async function createCuration(apiKey: string, bytes: Uint8Array, mime: string, t
 }
 
 async function createDiorama(apiKey: string, source: File, lens: string) {
+  const direction = {
+    poetic: 'quiet, intimate, warm amber light, tactile wood and plaster, with the emotional tone of a cherished memory',
+    cinematic: 'dramatic but elegant, with controlled contrast, volumetric gallery light, and a strong visual journey through the room',
+    future: 'a refined speculative archive, with museum-grade glass, restrained luminous accents, and archaeological precision',
+  }[lens] ?? 'warm, intimate, and museum-like';
   const body = new FormData();
   body.append('model', 'gpt-image-2');
   body.append('image', source, source.name || 'source.jpg');
-  body.append('size', '1024x1024');
-  body.append('quality', 'medium');
+  body.append('size', '1536x1024');
+  body.append('quality', 'high');
   body.append('output_format', 'png');
-  body.append('prompt', `Transform the supplied photograph into an original ${lens} miniature museum diorama. Preserve its recognizable central subjects, objects, colour cues, and emotional atmosphere, but restage them inside a cutaway isometric exhibition room. Warm cinematic gallery spotlights, tilt-shift depth of field, tactile handcrafted 3D materials, elegant display plinths and framed details, highly polished editorial render. Do not add text, logos, watermarks, or recognizable copyrighted characters.`);
+  body.append('prompt', `Create one polished landscape isometric miniature art museum that curates the supplied photograph.
+
+ANCHOR ARTWORK: Display the supplied photograph faithfully as the museum's large hero artwork, projection, or installation. Its main subject, people, distinctive objects, colours, composition, and emotional atmosphere must remain immediately recognizable. Do not repaint it into an unrelated scene, alter identities, or invent a different event.
+
+MUSEUM ARCHITECTURE: Build a believable contemporary museum gallery as a single open-front architectural cutaway, viewed from an elevated three-quarter isometric angle. Use proper gallery proportions, track lighting, stone or polished concrete flooring, plaster walls, museum glass, restrained barriers, elegant plinths, and generous negative space. This must read as an actual curated museum—not a bedroom, house, toy shop, fantasy village, or generic dollhouse.
+
+EXHIBITION DESIGN: The anchor artwork is the focal point. Create exactly three visually distinct exhibit zones around it. Each supporting zone should isolate a real, visible detail from the source as a tasteful museum object, material study, light installation, projection, or sculptural interpretation. Keep the relationship to the uploaded photograph obvious and specific. Include one or two tiny anonymous visitors only for scale, never as new story characters.
+
+ART DIRECTION: ${direction}. Premium stylized 3D render, subtle tilt-shift depth, tactile miniature materials, realistic scale, elegant gallery spotlights, restrained atmospheric dust, sophisticated editorial finish. Warm ochre, terracotta, walnut, cream, and deep forest tones should adapt to—not overwrite—the source palette.
+
+AVOID: no written text, captions, signage, logos, watermarks, UI, borders, crowds, extra limbs, duplicate subjects, recognizable copyrighted characters, fantasy clutter, domestic furniture, fisheye distortion, enclosed roof, or extreme blur. The final image must read immediately as a refined museum exhibition built around this specific photograph.`);
   const response = await fetch('https://api.openai.com/v1/images/edits', {
     method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body,
   });
@@ -103,8 +118,12 @@ export async function POST(request: Request) {
   const rawLens = form.get('lens');
   const title = (typeof rawTitle === 'string' ? rawTitle : 'Untitled moment').slice(0, 80);
   const lens = (typeof rawLens === 'string' ? rawLens : 'poetic').slice(0, 20);
-  if (!(photo instanceof File) || !photo.type.startsWith('image/') || photo.size > 12 * 1024 * 1024) {
-    return Response.json({ error: 'Choose a JPG, PNG, or WEBP under 12 MB.' }, { status: 400 });
+  if (!(photo instanceof File) || !photo.type.startsWith('image/') || photo.size > 900 * 1024) {
+    return Response.json({ error: 'Choose a JPG, PNG, or WEBP under 900 KB after browser optimization.' }, { status: 400 });
+  }
+
+  if (!bindings.OPENAI_API_KEY) {
+    return Response.json({ error: 'AI rendering is not connected yet. Add OPENAI_API_KEY in Site settings, then try again.' }, { status: 503 });
   }
 
   const id = crypto.randomUUID();
@@ -115,14 +134,15 @@ export async function POST(request: Request) {
   let renderBytes = sourceBytes;
   let generated = false;
 
-  if (bindings.OPENAI_API_KEY) {
-    const [curationResult, renderResult] = await Promise.allSettled([
-      createCuration(bindings.OPENAI_API_KEY, sourceBytes, photo.type, title, lens),
-      createDiorama(bindings.OPENAI_API_KEY, photo, lens),
-    ]);
-    if (curationResult.status === 'fulfilled') curation = { ...curation, ...curationResult.value };
-    if (renderResult.status === 'fulfilled') { renderBytes = renderResult.value; generated = true; }
+  const [curationResult, renderResult] = await Promise.allSettled([
+    createCuration(bindings.OPENAI_API_KEY, sourceBytes, photo.type, title, lens),
+    createDiorama(bindings.OPENAI_API_KEY, photo, lens),
+  ]);
+  if (curationResult.status === 'fulfilled') curation = { ...curation, ...curationResult.value };
+  if (renderResult.status === 'rejected') {
+    return Response.json({ error: 'The AI could not build this museum. Try a clearer photo or try again.' }, { status: 502 });
   }
+  renderBytes = renderResult.value; generated = true;
 
   await bindings.FILES.put(sourceKey, sourceBytes, { httpMetadata: { contentType: photo.type } });
   await bindings.FILES.put(renderKey, renderBytes, { httpMetadata: { contentType: generated ? 'image/png' : photo.type } });

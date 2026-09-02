@@ -28,7 +28,7 @@ export function MuseumBuilder() {
 
   function receiveFile(next?: File) {
     if (!next || !next.type.startsWith('image/')) return;
-    if (next.size > 12 * 1024 * 1024) { setError('That photo is over 12 MB. Choose a smaller one.'); return; }
+    if (next.size > 40 * 1024 * 1024) { setError('That photo is over 40 MB. Choose a smaller one.'); return; }
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     setFile(next);
     setImageUrl(URL.createObjectURL(next));
@@ -45,11 +45,15 @@ export function MuseumBuilder() {
   async function curate() {
     if (!file || !title.trim()) return;
     setStatus('curating'); setError('');
-    const form = new FormData();
-    form.append('photo', file); form.append('title', title.trim()); form.append('lens', lens);
     try {
+      const upload = await prepareImageUpload(file);
+      const form = new FormData();
+      form.append('photo', upload); form.append('title', title.trim()); form.append('lens', lens);
       const response = await fetch('/api/museums', { method: 'POST', body: form });
-      const payload = await response.json() as MuseumRecord & { error?: string };
+      const body = await response.text();
+      let payload: MuseumRecord & { error?: string };
+      try { payload = JSON.parse(body) as MuseumRecord & { error?: string }; }
+      catch { payload = { error: response.status === 413 ? 'The optimized photo is still too large. Try a smaller image.' : 'The museum service returned an unexpected response.' } as MuseumRecord & { error?: string }; }
       if (!response.ok) throw new Error(payload.error || 'The museum could not be curated.');
       setResult(payload); setStatus('ready');
     } catch (caught) {
@@ -78,7 +82,7 @@ export function MuseumBuilder() {
         <div className="builder-card">
           {!imageUrl ? (<>
             <button type="button" className="drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); receiveFile(event.dataTransfer.files?.[0]); }} onClick={() => inputRef.current?.click()}>
-              <div className="upload-icon"><ImagePlus size={26} strokeWidth={1.5} /></div><h2>Begin with a photograph</h2><p>Drop it here, or choose from your device</p><span className="file-note">JPG, PNG or WEBP · up to 12 MB</span>
+              <div className="upload-icon"><ImagePlus size={26} strokeWidth={1.5} /></div><h2>Begin with a photograph</h2><p>Drop it here, or choose from your device</p><span className="file-note">JPG, PNG or WEBP · optimized privately in your browser</span>
             </button>
             <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={(event: ChangeEvent<HTMLInputElement>) => receiveFile(event.target.files?.[0])} className="sr-only" />
           </>
@@ -99,4 +103,34 @@ export function MuseumBuilder() {
       <section className="promise-strip"><div><span>01</span><strong>A miniature world</strong><p>Your moment, restaged as a diorama</p></div><div><span>02</span><strong>Three exhibits</strong><p>Details hiding in plain sight</p></div><div><span>03</span><strong>A keepsake</strong><p>Download a Story-ready museum card</p></div><div className="ticket-cell"><Ticket size={20} /><p>One photograph.<br />One minute. One museum.</p></div></section>
     </main>
   );
+}
+
+async function prepareImageUpload(file: File): Promise<File> {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  let canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) { bitmap.close(); throw new Error('Your browser could not prepare that photograph.'); }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+
+  let quality = 0.84;
+  let blob = await canvasToBlob(canvas, quality);
+  while (blob.size > 850 * 1024 && Math.max(canvas.width, canvas.height) > 700) {
+    const smaller = document.createElement('canvas');
+    smaller.width = Math.max(1, Math.round(canvas.width * 0.84));
+    smaller.height = Math.max(1, Math.round(canvas.height * 0.84));
+    smaller.getContext('2d')?.drawImage(canvas, 0, 0, smaller.width, smaller.height);
+    canvas = smaller;
+    quality = Math.max(0.68, quality - 0.03);
+    blob = await canvasToBlob(canvas, quality);
+  }
+  if (blob.size > 900 * 1024) throw new Error('This photograph stays too large after optimization. Try a smaller image.');
+  return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'museum-source'}.webp`, { type: 'image/webp' });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Your browser could not prepare that photograph.')), 'image/webp', quality));
 }
