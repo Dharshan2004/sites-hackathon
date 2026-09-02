@@ -28,6 +28,7 @@ export function MuseumBuilder() {
   const [status, setStatus] = useState<'idle' | 'curating' | 'ready'>('idle');
   const [result, setResult] = useState<MuseumRecord | null>(null);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState('Preparing your photograph.');
 
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
@@ -49,18 +50,22 @@ export function MuseumBuilder() {
 
   async function curate() {
     if (!file || !title.trim()) return;
-    setStatus('curating'); setError('');
+    setStatus('curating'); setError(''); setProgress('Optimizing your photograph on this device.');
     try {
       const upload = await prepareImageUpload(file);
+      setProgress('Sending the miniature plans to the gallery architects.');
       const form = new FormData();
       form.append('photo', upload); form.append('title', title.trim()); form.append('lens', architecture);
       const response = await fetch('/api/museums', { method: 'POST', body: form });
       const body = await response.text();
-      let payload: MuseumRecord & { error?: string };
-      try { payload = JSON.parse(body) as MuseumRecord & { error?: string }; }
+      let payload: MuseumRecord & { error?: string; status?: string; message?: string };
+      try { payload = JSON.parse(body) as MuseumRecord & { error?: string; status?: string; message?: string }; }
       catch { payload = { error: response.status === 413 ? 'The optimized photo is still too large. Try a smaller image.' : 'The museum service returned an unexpected response.' } as MuseumRecord & { error?: string }; }
       if (!response.ok) throw new Error(payload.error || 'The museum could not be curated.');
-      setResult(payload); setStatus('ready');
+      if (payload.status !== 'processing' || !payload.id) throw new Error('The museum job did not start correctly.');
+      setProgress(payload.message || 'Constructing your architectural world.');
+      const museum = await waitForMuseum(payload.id, setProgress);
+      setResult(museum); setStatus('ready');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The museum could not be curated.');
       setStatus('idle');
@@ -104,7 +109,7 @@ export function MuseumBuilder() {
               </div>
             </div>
           )}
-          {status === 'curating' && <div className="curating-overlay"><div className="curating-orbit"><span /><span /><span /></div><p>Building the miniature world</p><small>Finding exhibits · shaping the room · writing the labels</small></div>}
+          {status === 'curating' && <div className="curating-overlay"><div className="curating-orbit"><span /><span /><span /></div><p>Building the miniature world</p><small>{progress}</small></div>}
         </div>
       </section>
       <section className="promise-strip"><div><span>01</span><strong>A miniature world</strong><p>Your moment, restaged as a diorama</p></div><div><span>02</span><strong>Three exhibits</strong><p>Details hiding in plain sight</p></div><div><span>03</span><strong>A keepsake</strong><p>Download a Story-ready museum card</p></div><div className="ticket-cell"><Ticket size={20} /><p>One photograph.<br />One minute. One museum.</p></div></section>
@@ -140,4 +145,26 @@ async function prepareImageUpload(file: File): Promise<File> {
 
 function canvasToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Your browser could not prepare that photograph.')), 'image/webp', quality));
+}
+
+async function waitForMuseum(id: string, report: (message: string) => void): Promise<MuseumRecord> {
+  let transientFailures = 0;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 2500));
+    try {
+      const response = await fetch(`/api/museums/${id}/status`, { cache: 'no-store' });
+      const text = await response.text();
+      const payload = JSON.parse(text) as MuseumRecord & { error?: string; status?: string; message?: string };
+      if (response.ok && response.status !== 202) return payload;
+      if (!response.ok) throw new Error(payload.error || 'The museum render failed.');
+      report(payload.message || 'The museum is still taking shape.');
+      transientFailures = 0;
+    } catch (caught) {
+      transientFailures += 1;
+      if (caught instanceof Error && !(caught instanceof TypeError) && !caught.message.toLowerCase().includes('network')) throw caught;
+      if (transientFailures >= 3) throw new Error('The connection was interrupted while checking the museum. Please try again.');
+      report('Reconnecting to the gallery workshop.');
+    }
+  }
+  throw new Error('This detailed museum is taking longer than expected. Please try again.');
 }
